@@ -198,6 +198,79 @@ impl<W> AsyncRead for TimeoutWriter<W>
     }
 }
 
+// TODO this stores two copies of the Handle which is maybe not great?
+pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
+
+impl<S> TimeoutStream<S>
+    where S: AsyncRead + AsyncWrite
+{
+    pub fn new(stream: S,
+               read_timeout: Duration,
+               write_timeout: Duration,
+               handle: &Handle)
+               -> TimeoutStream<S> {
+        let writer = TimeoutWriter::new(stream, write_timeout, handle);
+        let reader = TimeoutReader::new(writer, read_timeout, handle);
+        TimeoutStream(reader)
+    }
+
+    pub fn set_read_timeout(&mut self, timeout: Duration) {
+        self.0.set_timeout(timeout)
+    }
+
+    pub fn set_write_timeout(&mut self, timeout: Duration) {
+        self.0.get_mut().set_timeout(timeout)
+    }
+
+    pub fn get_ref(&self) -> &S {
+        self.0.get_ref().get_ref()
+    }
+
+    pub fn get_mut(&mut self) -> &mut S {
+        self.0.get_mut().get_mut()
+    }
+
+    pub fn into_inner(self) -> S {
+        self.0.into_inner().into_inner()
+    }
+}
+
+impl<S> Read for TimeoutStream<S>
+    where S: AsyncRead + AsyncWrite
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl<S> AsyncRead for TimeoutStream<S>
+    where S: AsyncRead + AsyncWrite
+{
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+        self.0.prepare_uninitialized_buffer(buf)
+    }
+}
+
+impl<S> Write for TimeoutStream<S>
+    where S: AsyncRead + AsyncWrite
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<S> AsyncWrite for TimeoutStream<S>
+    where S: AsyncRead + AsyncWrite
+{
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        self.0.shutdown()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use futures::Async;

@@ -26,6 +26,23 @@ impl<R> TimeoutReader<R>
             cur: None,
         }
     }
+
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+        self.cur = None;
+    }
+
+    pub fn get_ref(&self) -> &R {
+        &self.reader
+    }
+
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.reader
+    }
+
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
 }
 
 impl<R> Read for TimeoutReader<R>
@@ -102,6 +119,23 @@ impl<W> TimeoutWriter<W>
             handle: handle.clone(),
             cur: None,
         }
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+        self.cur = None;
+    }
+
+    pub fn get_ref(&self) -> &W {
+        &self.writer
+    }
+
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
+    pub fn into_inner(self) -> W {
+        self.writer
     }
 }
 

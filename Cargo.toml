@@ -4,3 +4,6 @@ version = "0.1.0"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 
 [dependencies]
+futures = "0.1.14"
+tokio-core = "0.1.7"
+tokio-io = "0.1.2"

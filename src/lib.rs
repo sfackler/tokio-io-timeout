@@ -10,24 +10,28 @@ use tokio_io::{AsyncRead, AsyncWrite};
 
 pub struct TimeoutReader<R> {
     reader: R,
-    timeout: Duration,
     handle: Handle,
+    timeout: Option<Duration>,
     cur: Option<Timeout>,
 }
 
 impl<R> TimeoutReader<R>
     where R: AsyncRead
 {
-    pub fn new(reader: R, timeout: Duration, handle: &Handle) -> TimeoutReader<R> {
+    pub fn new(reader: R, handle: &Handle) -> TimeoutReader<R> {
         TimeoutReader {
             reader,
-            timeout,
             handle: handle.clone(),
+            timeout: None,
             cur: None,
         }
     }
 
-    pub fn set_timeout(&mut self, timeout: Duration) {
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
         self.cur = None;
     }
@@ -61,11 +65,11 @@ impl<R> Read for TimeoutReader<R>
 
         match r {
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                let timer = match timer {
-                    Some(timer) => timer,
-                    None => Timeout::new(self.timeout, &self.handle)?,
+                self.cur = match (timer, self.timeout) {
+                    (Some(timer), _) => Some(timer),
+                    (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                    (None, None) => None,
                 };
-                self.cur = Some(timer);
             }
             _ => {}
         }
@@ -104,24 +108,28 @@ impl<R> AsyncWrite for TimeoutReader<R>
 
 pub struct TimeoutWriter<W> {
     writer: W,
-    timeout: Duration,
     handle: Handle,
+    timeout: Option<Duration>,
     cur: Option<Timeout>,
 }
 
 impl<W> TimeoutWriter<W>
     where W: AsyncWrite
 {
-    pub fn new(writer: W, timeout: Duration, handle: &Handle) -> TimeoutWriter<W> {
+    pub fn new(writer: W, handle: &Handle) -> TimeoutWriter<W> {
         TimeoutWriter {
             writer,
-            timeout,
             handle: handle.clone(),
+            timeout: None,
             cur: None,
         }
     }
 
-    pub fn set_timeout(&mut self, timeout: Duration) {
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
         self.cur = None;
     }
@@ -155,11 +163,11 @@ impl<W> Write for TimeoutWriter<W>
 
         match r {
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                let timer = match timer {
-                    Some(timer) => timer,
-                    None => Timeout::new(self.timeout, &self.handle)?,
+                self.cur = match (timer, self.timeout) {
+                    (Some(timer), _) => Some(timer),
+                    (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                    (None, None) => None,
                 };
-                self.cur = Some(timer);
             }
             _ => {}
         }
@@ -204,21 +212,25 @@ pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
 impl<S> TimeoutStream<S>
     where S: AsyncRead + AsyncWrite
 {
-    pub fn new(stream: S,
-               read_timeout: Duration,
-               write_timeout: Duration,
-               handle: &Handle)
-               -> TimeoutStream<S> {
-        let writer = TimeoutWriter::new(stream, write_timeout, handle);
-        let reader = TimeoutReader::new(writer, read_timeout, handle);
+    pub fn new(stream: S, handle: &Handle) -> TimeoutStream<S> {
+        let writer = TimeoutWriter::new(stream, handle);
+        let reader = TimeoutReader::new(writer, handle);
         TimeoutStream(reader)
     }
 
-    pub fn set_read_timeout(&mut self, timeout: Duration) {
+    pub fn read_timeout(&self) -> Option<Duration> {
+        self.0.timeout()
+    }
+
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) {
         self.0.set_timeout(timeout)
     }
 
-    pub fn set_write_timeout(&mut self, timeout: Duration) {
+    pub fn write_timeout(&self) -> Option<Duration> {
+        self.0.get_ref().timeout()
+    }
+
+    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
         self.0.get_mut().set_timeout(timeout)
     }
 
@@ -338,7 +350,8 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let reader = DelayStream(Timeout::new(Duration::from_millis(500), &core.handle()).unwrap());
-        let reader = TimeoutReader::new(reader, Duration::from_millis(100), &core.handle());
+        let mut reader = TimeoutReader::new(reader, &core.handle());
+        reader.set_timeout(Some(Duration::from_millis(100)));
 
         let r = core.run(ReadFuture(reader));
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
@@ -349,7 +362,8 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let reader = DelayStream(Timeout::new(Duration::from_millis(100), &core.handle()).unwrap());
-        let reader = TimeoutReader::new(reader, Duration::from_millis(500), &core.handle());
+        let mut reader = TimeoutReader::new(reader, &core.handle());
+        reader.set_timeout(Some(Duration::from_millis(500)));
 
         core.run(ReadFuture(reader)).unwrap();
     }
@@ -374,7 +388,8 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let writer = DelayStream(Timeout::new(Duration::from_millis(500), &core.handle()).unwrap());
-        let writer = TimeoutWriter::new(writer, Duration::from_millis(100), &core.handle());
+        let mut writer = TimeoutWriter::new(writer, &core.handle());
+        writer.set_timeout(Some(Duration::from_millis(100)));
 
         let r = core.run(WriteFuture(writer));
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
@@ -385,7 +400,8 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let writer = DelayStream(Timeout::new(Duration::from_millis(100), &core.handle()).unwrap());
-        let writer = TimeoutWriter::new(writer, Duration::from_millis(500), &core.handle());
+        let mut writer = TimeoutWriter::new(writer, &core.handle());
+        writer.set_timeout(Some(Duration::from_millis(500)));
 
         core.run(WriteFuture(writer)).unwrap();
     }

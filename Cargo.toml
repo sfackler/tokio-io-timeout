@@ -7,3 +7,5 @@ authors = ["Steven Fackler <sfackler@gmail.com>"]
 futures = "0.1.14"
 tokio-core = "0.1.7"
 tokio-io = "0.1.2"
+tokio-proto = "0.1.1"
+tokio-service = "0.1.0"

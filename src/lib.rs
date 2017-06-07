@@ -1,12 +1,17 @@
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_proto;
+extern crate tokio_service;
 
 use futures::{Future, Poll};
 use std::time::Duration;
 use std::io::{self, Read, Write};
+use std::marker::PhantomData;
 use tokio_core::reactor::{Handle, Timeout};
 use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_proto::BindServer;
+use tokio_service::Service;
 
 pub struct TimeoutReader<R> {
     reader: R,
@@ -280,6 +285,70 @@ impl<S> AsyncWrite for TimeoutStream<S>
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.0.shutdown()
+    }
+}
+
+pub struct TimeoutServerBinder<Kind, T, P>
+    where P: BindServer<Kind, TimeoutStream<T>>,
+          T: 'static
+{
+    proto: P,
+    read_timeout: Option<Duration>,
+    write_timeout: Option<Duration>,
+    _p: PhantomData<(Kind, T)>,
+}
+
+impl<Kind, T, P> TimeoutServerBinder<Kind, T, P>
+    where P: BindServer<Kind, TimeoutStream<T>>,
+          T: AsyncRead + AsyncWrite + 'static,
+          Kind: 'static
+{
+    pub fn new(proto: P) -> TimeoutServerBinder<Kind, T, P> {
+        TimeoutServerBinder {
+            proto,
+            read_timeout: None,
+            write_timeout: None,
+            _p: PhantomData,
+        }
+    }
+
+    pub fn read_timeout(&self) -> Option<Duration> {
+        self.read_timeout
+    }
+
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) {
+        self.read_timeout = timeout;
+    }
+
+    pub fn write_timeout(&self) -> Option<Duration> {
+        self.write_timeout
+    }
+
+    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
+        self.write_timeout = timeout;
+    }
+}
+
+pub enum TimeoutKind {}
+
+impl<Kind, T, P> BindServer<TimeoutKind, T> for TimeoutServerBinder<Kind, T, P>
+    where P: BindServer<Kind, TimeoutStream<T>>,
+          T: AsyncRead + AsyncWrite + 'static,
+          Kind: 'static
+{
+    type ServiceRequest = P::ServiceRequest;
+    type ServiceResponse = P::ServiceResponse;
+    type ServiceError = P::ServiceError;
+
+    fn bind_server<S>(&self, handle: &Handle, io: T, service: S)
+        where S: Service<Request = P::ServiceRequest,
+                         Response = P::ServiceResponse,
+                         Error = P::ServiceError> + 'static
+    {
+        let mut io = TimeoutStream::new(io, handle);
+        io.set_read_timeout(self.read_timeout);
+        io.set_write_timeout(self.write_timeout);
+        self.proto.bind_server(handle, io, service)
     }
 }
 

@@ -167,17 +167,17 @@ impl<W> TimeoutWriter<W>
     }
 
     /// Returns a shared reference to the inner writer.    
-    pub fn get_ref(&self) -> &R {
+    pub fn get_ref(&self) -> &W {
         &self.writer
     }
 
     /// Returns a mutable reference to the inner writer.
-    pub fn get_mut(&mut self) -> &mut R {
+    pub fn get_mut(&mut self) -> &mut W {
         &mut self.writer
     }
 
     /// Consumes the `TimeoutWriter`, returning the inner writer.
-    pub fn into_inner(self) -> R {
+    pub fn into_inner(self) -> W {
         self.writer
     }
 }
@@ -383,6 +383,7 @@ impl<Kind, T, P> TimeoutServerBinder<Kind, T, P>
     }
 }
 
+/// A marker type for the `TimeoutServerBinder`'s `BindServer` implementation.
 pub enum TimeoutKind {}
 
 impl<Kind, T, P> BindServer<TimeoutKind, T> for TimeoutServerBinder<Kind, T, P>

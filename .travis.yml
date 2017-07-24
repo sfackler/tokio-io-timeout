@@ -1,8 +1,0 @@
-language: rust
-sudo: false
-cache: cargo
-rust:
-- nightly
-- 1.18.0
-script:
-- cargo test

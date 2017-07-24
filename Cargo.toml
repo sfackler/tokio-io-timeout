@@ -1,11 +1,11 @@
 [package]
 name = "tokio-io-timeout"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 license = "MIT/Apache-2.0"
 description = "Tokio wrappers which apply timeouts to IO operations"
 repository = "https://github.com/sfackler/tokio-io-timeout"
-documentation = "https://docs.rs/tokio-io-timeout/0.1.0/tokio_io_timeout"
+documentation = "https://docs.rs/tokio-io-timeout/0.1.1/tokio_io_timeout"
 readme = "README.md"
 
 [dependencies]

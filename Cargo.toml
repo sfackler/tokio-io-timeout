@@ -9,6 +9,7 @@ documentation = "https://docs.rs/tokio-io-timeout/0.1.0/tokio_io_timeout"
 readme = "README.md"
 
 [dependencies]
+bytes = "0.4.4"
 futures = "0.1.14"
 tokio-core = "0.1.7"
 tokio-io = "0.1.2"

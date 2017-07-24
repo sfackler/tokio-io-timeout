@@ -6,13 +6,15 @@
 //! the before the countdown expires, `TimedOut` is returned.
 #![doc(html_root_url="https://docs.rs/tokio-io-timeout/0.1.0")]
 #![warn(missing_docs)]
+extern crate bytes;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_proto;
 extern crate tokio_service;
 
-use futures::{Future, Poll};
+use bytes::{Buf, BufMut};
+use futures::{Future, Poll, Async};
 use std::time::Duration;
 use std::io::{self, Read, Write};
 use std::marker::PhantomData;
@@ -57,7 +59,7 @@ impl<R> TimeoutReader<R>
         self.cur = None;
     }
 
-    /// Returns a shared reference to the inner reader.    
+    /// Returns a shared reference to the inner reader.
     pub fn get_ref(&self) -> &R {
         &self.reader
     }
@@ -108,6 +110,28 @@ impl<R> AsyncRead for TimeoutReader<R>
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.reader.prepare_uninitialized_buffer(buf)
     }
+
+    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        let mut timer = self.cur.take();
+
+        if let Some(ref mut timer) = timer {
+            if timer.poll()?.is_ready() {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+        }
+
+        let r = self.reader.read_buf(buf);
+
+        if let Ok(Async::NotReady) = r {
+            self.cur = match (timer, self.timeout) {
+                (Some(timer), _) => Some(timer),
+                (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                (None, None) => None,
+            }
+        }
+
+        r
+    }
 }
 
 impl<R> Write for TimeoutReader<R>
@@ -127,6 +151,10 @@ impl<R> AsyncWrite for TimeoutReader<R>
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.reader.shutdown()
+    }
+
+    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        self.reader.write_buf(buf)
     }
 }
 
@@ -166,7 +194,7 @@ impl<W> TimeoutWriter<W>
         self.cur = None;
     }
 
-    /// Returns a shared reference to the inner writer.    
+    /// Returns a shared reference to the inner writer.
     pub fn get_ref(&self) -> &W {
         &self.writer
     }
@@ -223,6 +251,28 @@ impl<W> AsyncWrite for TimeoutWriter<W>
         // TODO should a timeout be applied here as well?
         self.writer.shutdown()
     }
+
+    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        let mut timer = self.cur.take();
+
+        if let Some(ref mut timer) = timer {
+            if timer.poll()?.is_ready() {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+        }
+
+        let r = self.writer.write_buf(buf);
+
+        if let Ok(Async::NotReady) = r {
+            self.cur = match (timer, self.timeout) {
+                (Some(timer), _) => Some(timer),
+                (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                (None, None) => None,
+            };
+        }
+
+        r
+    }
 }
 
 impl<W> Read for TimeoutWriter<W>
@@ -238,6 +288,10 @@ impl<W> AsyncRead for TimeoutWriter<W>
 {
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.writer.prepare_uninitialized_buffer(buf)
+    }
+
+    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        self.writer.read_buf(buf)
     }
 }
 
@@ -276,7 +330,7 @@ impl<S> TimeoutStream<S>
 
     /// Sets the write timeout.
     ///
-    /// This will reset any pending write timeout.    
+    /// This will reset any pending write timeout.
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
         self.0.get_mut().set_timeout(timeout)
     }

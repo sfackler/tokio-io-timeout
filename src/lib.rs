@@ -365,6 +365,10 @@ impl<S> AsyncRead for TimeoutStream<S>
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.0.prepare_uninitialized_buffer(buf)
     }
+
+    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        self.0.read_buf(buf)
+    }
 }
 
 impl<S> Write for TimeoutStream<S>
@@ -384,6 +388,10 @@ impl<S> AsyncWrite for TimeoutStream<S>
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.0.shutdown()
+    }
+
+    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        self.0.write_buf(buf)
     }
 }
 

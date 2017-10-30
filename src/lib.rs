@@ -507,8 +507,9 @@ impl<Kind, T, P> BindServer<TimeoutKind, T> for TimeoutServerBinder<Kind, T, P>
 
 #[cfg(test)]
 mod test {
-    use futures::Async;
+    use futures::{future, Async, Stream};
     use tokio_core::reactor::Core;
+    use tokio_core::net::{TcpListener, TcpStream};
 
     use super::*;
 
@@ -551,9 +552,12 @@ mod test {
         }
     }
 
-    struct ReadFuture(TimeoutReader<DelayStream>);
+    struct ReadFuture<S>(S);
 
-    impl Future for ReadFuture {
+    impl<S> Future for ReadFuture<S>
+    where
+        S: AsyncRead
+    {
         type Item = ();
         type Error = io::Error;
 
@@ -626,5 +630,35 @@ mod test {
         writer.set_timeout(Some(Duration::from_millis(500)));
 
         core.run(WriteFuture(writer)).unwrap();
+    }
+
+    #[test]
+    fn tcp_read() {
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
+
+        let addr = "127.0.0.1:0".parse().unwrap();
+        let listener = TcpListener::bind(&addr, &handle).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = listener.incoming()
+            .for_each(|(s, _)| {
+                // hold onto the socket forever without doing anything
+                future::empty::<(), _>().map(move |_| println!("{:?}", s))
+            })
+            .map_err(|_| ());
+        handle.spawn(server);
+
+        let f = TcpStream::connect(&addr, &handle)
+            .and_then(|s| {
+                let mut s = TimeoutStream::new(s, &handle);
+                s.set_read_timeout(Some(Duration::from_millis(100)));
+                ReadFuture(s)
+            });
+        match core.run(f) {
+            Ok(_) => panic!("unexpected success"),
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {},
+            Err(e) => panic!("{:?}", e),
+        }
     }
 }

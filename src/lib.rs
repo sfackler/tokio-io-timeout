@@ -93,7 +93,16 @@ impl<R> Read for TimeoutReader<R>
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.cur = match (timer, self.timeout) {
                     (Some(timer), _) => Some(timer),
-                    (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                    (None, Some(timeout)) => {
+                        let mut timer = Timeout::new(timeout, &self.handle)?;
+                        // We need to make sure to poll this immediately so it's registered with
+                        // the event loop. Otherwise we don't see the timeout hit until the inner
+                        // reader's ready.
+                        if timer.poll()?.is_ready() {
+                            return Err(io::Error::from(io::ErrorKind::TimedOut));
+                        }
+                        Some(timer)
+                    }
                     (None, None) => None,
                 };
             }
@@ -125,7 +134,16 @@ impl<R> AsyncRead for TimeoutReader<R>
         if let Ok(Async::NotReady) = r {
             self.cur = match (timer, self.timeout) {
                 (Some(timer), _) => Some(timer),
-                (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                (None, Some(timeout)) => {
+                    let mut timer = Timeout::new(timeout, &self.handle)?;
+                    // We need to make sure to poll this immediately so it's registered with
+                    // the event loop. Otherwise we don't see the timeout hit until the inner
+                    // reader's ready.
+                    if timer.poll()?.is_ready() {
+                        return Err(io::Error::from(io::ErrorKind::TimedOut));
+                    }
+                    Some(timer)
+                }
                 (None, None) => None,
             }
         }
@@ -228,7 +246,16 @@ impl<W> Write for TimeoutWriter<W>
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.cur = match (timer, self.timeout) {
                     (Some(timer), _) => Some(timer),
-                    (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                    (None, Some(timeout)) => {
+                        let mut timer = Timeout::new(timeout, &self.handle)?;
+                        // We need to make sure to poll this immediately so it's registered with
+                        // the event loop. Otherwise we don't see the timeout hit until the inner
+                        // writer's ready.
+                        if timer.poll()?.is_ready() {
+                            return Err(io::Error::from(io::ErrorKind::TimedOut));
+                        }
+                        Some(timer)
+                    }
                     (None, None) => None,
                 };
             }
@@ -266,7 +293,16 @@ impl<W> AsyncWrite for TimeoutWriter<W>
         if let Ok(Async::NotReady) = r {
             self.cur = match (timer, self.timeout) {
                 (Some(timer), _) => Some(timer),
-                (None, Some(timeout)) => Some(Timeout::new(timeout, &self.handle)?),
+                (None, Some(timeout)) => {
+                    let mut timer = Timeout::new(timeout, &self.handle)?;
+                    // We need to make sure to poll this immediately so it's registered with
+                    // the event loop. Otherwise we don't see the timeout hit until the inner
+                    // writer's ready.
+                    if timer.poll()?.is_ready() {
+                        return Err(io::Error::from(io::ErrorKind::TimedOut));
+                    }
+                    Some(timer)
+                }
                 (None, None) => None,
             };
         }

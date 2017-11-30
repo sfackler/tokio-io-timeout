@@ -4,7 +4,7 @@
 //! blocking sockets. A timeout countdown is initiated when a read/write
 //! operation returns `WouldBlock`. If a read/write does not return successfully
 //! the before the countdown expires, `TimedOut` is returned.
-#![doc(html_root_url="https://docs.rs/tokio-io-timeout/0.1")]
+#![doc(html_root_url = "https://docs.rs/tokio-io-timeout/0.1")]
 #![warn(missing_docs)]
 extern crate bytes;
 extern crate futures;
@@ -13,7 +13,7 @@ extern crate tokio_io;
 extern crate tokio_service;
 
 use bytes::{Buf, BufMut};
-use futures::{Future, Poll, Async};
+use futures::{Async, Future, Poll};
 use std::time::{Duration, Instant};
 use std::io::{self, Read, Write};
 use tokio_core::reactor::{Handle, Timeout};
@@ -28,7 +28,8 @@ pub struct TimeoutReader<R> {
 }
 
 impl<R> TimeoutReader<R>
-    where R: AsyncRead
+where
+    R: AsyncRead,
 {
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
@@ -72,7 +73,8 @@ impl<R> TimeoutReader<R>
 }
 
 impl<R> Read for TimeoutReader<R>
-    where R: AsyncRead
+where
+    R: AsyncRead,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.active {
@@ -84,7 +86,9 @@ impl<R> Read for TimeoutReader<R>
         let r = self.reader.read(buf);
 
         match (&r, self.timeout) {
-            (&Err(ref e), Some(timeout)) if e.kind() == io::ErrorKind::WouldBlock && !self.active => {
+            (&Err(ref e), Some(timeout))
+                if e.kind() == io::ErrorKind::WouldBlock && !self.active =>
+            {
                 self.active = true;
                 self.cur.reset(Instant::now() + timeout);
                 if self.cur.poll()?.is_ready() {
@@ -99,7 +103,8 @@ impl<R> Read for TimeoutReader<R>
 }
 
 impl<R> AsyncRead for TimeoutReader<R>
-    where R: AsyncRead
+where
+    R: AsyncRead,
 {
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.reader.prepare_uninitialized_buffer(buf)
@@ -130,7 +135,8 @@ impl<R> AsyncRead for TimeoutReader<R>
 }
 
 impl<R> Write for TimeoutReader<R>
-    where R: Write
+where
+    R: Write,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.reader.write(buf)
@@ -142,7 +148,8 @@ impl<R> Write for TimeoutReader<R>
 }
 
 impl<R> AsyncWrite for TimeoutReader<R>
-    where R: AsyncWrite
+where
+    R: AsyncWrite,
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.reader.shutdown()
@@ -162,7 +169,8 @@ pub struct TimeoutWriter<W> {
 }
 
 impl<W> TimeoutWriter<W>
-    where W: AsyncWrite
+where
+    W: AsyncWrite,
 {
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
@@ -206,7 +214,8 @@ impl<W> TimeoutWriter<W>
 }
 
 impl<W> Write for TimeoutWriter<W>
-    where W: AsyncWrite
+where
+    W: AsyncWrite,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.active {
@@ -218,7 +227,9 @@ impl<W> Write for TimeoutWriter<W>
         let r = self.writer.write(buf);
 
         match (&r, self.timeout) {
-            (&Err(ref e), Some(timeout)) if e.kind() == io::ErrorKind::WouldBlock && !self.active => {
+            (&Err(ref e), Some(timeout))
+                if e.kind() == io::ErrorKind::WouldBlock && !self.active =>
+            {
                 self.active = true;
                 self.cur.reset(Instant::now() + timeout);
                 if self.cur.poll()?.is_ready() {
@@ -238,7 +249,8 @@ impl<W> Write for TimeoutWriter<W>
 }
 
 impl<W> AsyncWrite for TimeoutWriter<W>
-    where W: AsyncWrite
+where
+    W: AsyncWrite,
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         // TODO should a timeout be applied here as well?
@@ -270,7 +282,8 @@ impl<W> AsyncWrite for TimeoutWriter<W>
 }
 
 impl<W> Read for TimeoutWriter<W>
-    where W: Read
+where
+    W: Read,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.writer.read(buf)
@@ -278,7 +291,8 @@ impl<W> Read for TimeoutWriter<W>
 }
 
 impl<W> AsyncRead for TimeoutWriter<W>
-    where W: AsyncRead
+where
+    W: AsyncRead,
 {
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.writer.prepare_uninitialized_buffer(buf)
@@ -294,7 +308,8 @@ impl<W> AsyncRead for TimeoutWriter<W>
 pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
 
 impl<S> TimeoutStream<S>
-    where S: AsyncRead + AsyncWrite
+where
+    S: AsyncRead + AsyncWrite,
 {
     /// Returns a new `TimeoutStream` wrapping the specified stream.
     ///
@@ -346,7 +361,8 @@ impl<S> TimeoutStream<S>
 }
 
 impl<S> Read for TimeoutStream<S>
-    where S: AsyncRead + AsyncWrite
+where
+    S: AsyncRead + AsyncWrite,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.0.read(buf)
@@ -354,7 +370,8 @@ impl<S> Read for TimeoutStream<S>
 }
 
 impl<S> AsyncRead for TimeoutStream<S>
-    where S: AsyncRead + AsyncWrite
+where
+    S: AsyncRead + AsyncWrite,
 {
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.0.prepare_uninitialized_buffer(buf)
@@ -366,7 +383,8 @@ impl<S> AsyncRead for TimeoutStream<S>
 }
 
 impl<S> Write for TimeoutStream<S>
-    where S: AsyncRead + AsyncWrite
+where
+    S: AsyncRead + AsyncWrite,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
@@ -378,7 +396,8 @@ impl<S> Write for TimeoutStream<S>
 }
 
 impl<S> AsyncWrite for TimeoutStream<S>
-    where S: AsyncRead + AsyncWrite
+where
+    S: AsyncRead + AsyncWrite,
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.0.shutdown()
@@ -440,7 +459,7 @@ mod test {
 
     impl<S> Future for ReadFuture<S>
     where
-        S: AsyncRead
+        S: AsyncRead,
     {
         type Item = ();
         type Error = io::Error;
@@ -525,7 +544,8 @@ mod test {
         let listener = TcpListener::bind(&addr, &handle).unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server = listener.incoming()
+        let server = listener
+            .incoming()
             .for_each(|(s, _)| {
                 // hold onto the socket forever without doing anything
                 future::empty::<(), _>().map(move |_| println!("{:?}", s))
@@ -533,15 +553,14 @@ mod test {
             .map_err(|_| ());
         handle.spawn(server);
 
-        let f = TcpStream::connect(&addr, &handle)
-            .and_then(|s| {
-                let mut s = TimeoutStream::new(s, &handle).unwrap();
-                s.set_read_timeout(Some(Duration::from_millis(100)));
-                ReadFuture(s)
-            });
+        let f = TcpStream::connect(&addr, &handle).and_then(|s| {
+            let mut s = TimeoutStream::new(s, &handle).unwrap();
+            s.set_read_timeout(Some(Duration::from_millis(100)));
+            ReadFuture(s)
+        });
         match core.run(f) {
             Ok(_) => panic!("unexpected success"),
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {},
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {}
             Err(e) => panic!("{:?}", e),
         }
     }

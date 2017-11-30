@@ -10,25 +10,21 @@ extern crate bytes;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
-extern crate tokio_proto;
 extern crate tokio_service;
 
 use bytes::{Buf, BufMut};
 use futures::{Future, Poll, Async};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::io::{self, Read, Write};
-use std::marker::PhantomData;
 use tokio_core::reactor::{Handle, Timeout};
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_proto::BindServer;
-use tokio_service::Service;
 
 /// An `AsyncRead`er which applies a timeout to read operations.
 pub struct TimeoutReader<R> {
     reader: R,
-    handle: Handle,
     timeout: Option<Duration>,
-    cur: Option<Timeout>,
+    cur: Timeout,
+    active: bool,
 }
 
 impl<R> TimeoutReader<R>
@@ -37,13 +33,13 @@ impl<R> TimeoutReader<R>
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
     /// There is initially no timeout.
-    pub fn new(reader: R, handle: &Handle) -> TimeoutReader<R> {
-        TimeoutReader {
+    pub fn new(reader: R, handle: &Handle) -> io::Result<TimeoutReader<R>> {
+        Ok(TimeoutReader {
             reader,
-            handle: handle.clone(),
             timeout: None,
-            cur: None,
-        }
+            cur: Timeout::new(Duration::from_secs(0), handle)?,
+            active: false,
+        })
     }
 
     /// Returns the current read timeout.
@@ -56,7 +52,7 @@ impl<R> TimeoutReader<R>
     /// This will reset any pending timeout.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
-        self.cur = None;
+        self.active = false;
     }
 
     /// Returns a shared reference to the inner reader.
@@ -79,32 +75,21 @@ impl<R> Read for TimeoutReader<R>
     where R: AsyncRead
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut timer = self.cur.take();
-
-        if let Some(ref mut timer) = timer {
-            if timer.poll()?.is_ready() {
+        if self.active {
+            if self.cur.poll()?.is_ready() {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
         }
 
         let r = self.reader.read(buf);
 
-        match r {
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.cur = match (timer, self.timeout) {
-                    (Some(timer), _) => Some(timer),
-                    (None, Some(timeout)) => {
-                        let mut timer = Timeout::new(timeout, &self.handle)?;
-                        // We need to make sure to poll this immediately so it's registered with
-                        // the event loop. Otherwise we don't see the timeout hit until the inner
-                        // reader's ready.
-                        if timer.poll()?.is_ready() {
-                            return Err(io::Error::from(io::ErrorKind::TimedOut));
-                        }
-                        Some(timer)
-                    }
-                    (None, None) => None,
-                };
+        match (&r, self.timeout) {
+            (&Err(ref e), Some(timeout)) if e.kind() == io::ErrorKind::WouldBlock && !self.active => {
+                self.active = true;
+                self.cur.reset(Instant::now() + timeout);
+                if self.cur.poll()?.is_ready() {
+                    return Err(io::Error::from(io::ErrorKind::TimedOut));
+                }
             }
             _ => {}
         }
@@ -121,31 +106,23 @@ impl<R> AsyncRead for TimeoutReader<R>
     }
 
     fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        let mut timer = self.cur.take();
-
-        if let Some(ref mut timer) = timer {
-            if timer.poll()?.is_ready() {
+        if self.active {
+            if self.cur.poll()?.is_ready() {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
         }
 
         let r = self.reader.read_buf(buf);
 
-        if let Ok(Async::NotReady) = r {
-            self.cur = match (timer, self.timeout) {
-                (Some(timer), _) => Some(timer),
-                (None, Some(timeout)) => {
-                    let mut timer = Timeout::new(timeout, &self.handle)?;
-                    // We need to make sure to poll this immediately so it's registered with
-                    // the event loop. Otherwise we don't see the timeout hit until the inner
-                    // reader's ready.
-                    if timer.poll()?.is_ready() {
-                        return Err(io::Error::from(io::ErrorKind::TimedOut));
-                    }
-                    Some(timer)
+        match (&r, self.timeout) {
+            (&Ok(Async::NotReady), Some(timeout)) if !self.active => {
+                self.active = true;
+                self.cur.reset(Instant::now() + timeout);
+                if self.cur.poll()?.is_ready() {
+                    return Err(io::Error::from(io::ErrorKind::TimedOut));
                 }
-                (None, None) => None,
             }
+            _ => {}
         }
 
         r
@@ -179,9 +156,9 @@ impl<R> AsyncWrite for TimeoutReader<R>
 /// An `AsyncWrite`er which applies a timeout to write operations.
 pub struct TimeoutWriter<W> {
     writer: W,
-    handle: Handle,
     timeout: Option<Duration>,
-    cur: Option<Timeout>,
+    cur: Timeout,
+    active: bool,
 }
 
 impl<W> TimeoutWriter<W>
@@ -190,13 +167,13 @@ impl<W> TimeoutWriter<W>
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
     /// There is initially no timeout.
-    pub fn new(writer: W, handle: &Handle) -> TimeoutWriter<W> {
-        TimeoutWriter {
+    pub fn new(writer: W, handle: &Handle) -> io::Result<TimeoutWriter<W>> {
+        Ok(TimeoutWriter {
             writer,
-            handle: handle.clone(),
             timeout: None,
-            cur: None,
-        }
+            cur: Timeout::new(Duration::from_secs(0), handle)?,
+            active: false,
+        })
     }
 
     /// Returns the current write timeout.
@@ -209,7 +186,7 @@ impl<W> TimeoutWriter<W>
     /// This will reset any pending timeout.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
-        self.cur = None;
+        self.active = false;
     }
 
     /// Returns a shared reference to the inner writer.
@@ -232,32 +209,21 @@ impl<W> Write for TimeoutWriter<W>
     where W: AsyncWrite
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut timer = self.cur.take();
-
-        if let Some(ref mut timer) = timer {
-            if timer.poll()?.is_ready() {
+        if self.active {
+            if self.cur.poll()?.is_ready() {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
         }
 
         let r = self.writer.write(buf);
 
-        match r {
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.cur = match (timer, self.timeout) {
-                    (Some(timer), _) => Some(timer),
-                    (None, Some(timeout)) => {
-                        let mut timer = Timeout::new(timeout, &self.handle)?;
-                        // We need to make sure to poll this immediately so it's registered with
-                        // the event loop. Otherwise we don't see the timeout hit until the inner
-                        // writer's ready.
-                        if timer.poll()?.is_ready() {
-                            return Err(io::Error::from(io::ErrorKind::TimedOut));
-                        }
-                        Some(timer)
-                    }
-                    (None, None) => None,
-                };
+        match (&r, self.timeout) {
+            (&Err(ref e), Some(timeout)) if e.kind() == io::ErrorKind::WouldBlock && !self.active => {
+                self.active = true;
+                self.cur.reset(Instant::now() + timeout);
+                if self.cur.poll()?.is_ready() {
+                    return Err(io::Error::from(io::ErrorKind::TimedOut));
+                }
             }
             _ => {}
         }
@@ -280,31 +246,23 @@ impl<W> AsyncWrite for TimeoutWriter<W>
     }
 
     fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        let mut timer = self.cur.take();
-
-        if let Some(ref mut timer) = timer {
-            if timer.poll()?.is_ready() {
+        if self.active {
+            if self.cur.poll()?.is_ready() {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
         }
 
         let r = self.writer.write_buf(buf);
 
-        if let Ok(Async::NotReady) = r {
-            self.cur = match (timer, self.timeout) {
-                (Some(timer), _) => Some(timer),
-                (None, Some(timeout)) => {
-                    let mut timer = Timeout::new(timeout, &self.handle)?;
-                    // We need to make sure to poll this immediately so it's registered with
-                    // the event loop. Otherwise we don't see the timeout hit until the inner
-                    // writer's ready.
-                    if timer.poll()?.is_ready() {
-                        return Err(io::Error::from(io::ErrorKind::TimedOut));
-                    }
-                    Some(timer)
+        match (&r, self.timeout) {
+            (&Ok(Async::NotReady), Some(timeout)) if !self.active => {
+                self.active = true;
+                self.cur.reset(Instant::now() + timeout);
+                if self.cur.poll()?.is_ready() {
+                    return Err(io::Error::from(io::ErrorKind::TimedOut));
                 }
-                (None, None) => None,
-            };
+            }
+            _ => {}
         }
 
         r
@@ -341,10 +299,10 @@ impl<S> TimeoutStream<S>
     /// Returns a new `TimeoutStream` wrapping the specified stream.
     ///
     /// There is initially no read or write timeout.
-    pub fn new(stream: S, handle: &Handle) -> TimeoutStream<S> {
-        let writer = TimeoutWriter::new(stream, handle);
-        let reader = TimeoutReader::new(writer, handle);
-        TimeoutStream(reader)
+    pub fn new(stream: S, handle: &Handle) -> io::Result<TimeoutStream<S>> {
+        let writer = TimeoutWriter::new(stream, handle)?;
+        let reader = TimeoutReader::new(writer, handle)?;
+        Ok(TimeoutStream(reader))
     }
 
     /// Returns the current read timeout.
@@ -431,80 +389,6 @@ impl<S> AsyncWrite for TimeoutStream<S>
     }
 }
 
-/// A `BindServer` which wraps streams in a `TimeoutStream` before delegating
-/// to another `BindServer`.
-pub struct TimeoutServerBinder<Kind, T, P>
-    where P: BindServer<Kind, TimeoutStream<T>>,
-          T: 'static
-{
-    proto: P,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
-    _p: PhantomData<(Kind, T)>,
-}
-
-impl<Kind, T, P> TimeoutServerBinder<Kind, T, P>
-    where P: BindServer<Kind, TimeoutStream<T>>,
-          T: AsyncRead + AsyncWrite + 'static,
-          Kind: 'static
-{
-    /// Returns a new `TimeoutServerBinder` wrapping the specified binder.
-    ///
-    /// There is initially no read or write timeout.
-    pub fn new(proto: P) -> TimeoutServerBinder<Kind, T, P> {
-        TimeoutServerBinder {
-            proto,
-            read_timeout: None,
-            write_timeout: None,
-            _p: PhantomData,
-        }
-    }
-
-    /// Returns the current read timeout.
-    pub fn read_timeout(&self) -> Option<Duration> {
-        self.read_timeout
-    }
-
-    /// Sets the read timeout.
-    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) {
-        self.read_timeout = timeout;
-    }
-
-    /// Returns the current write timeout.
-    pub fn write_timeout(&self) -> Option<Duration> {
-        self.write_timeout
-    }
-
-    /// Sets the write timeout.
-    pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
-        self.write_timeout = timeout;
-    }
-}
-
-/// A marker type for the `TimeoutServerBinder`'s `BindServer` implementation.
-pub enum TimeoutKind {}
-
-impl<Kind, T, P> BindServer<TimeoutKind, T> for TimeoutServerBinder<Kind, T, P>
-    where P: BindServer<Kind, TimeoutStream<T>>,
-          T: AsyncRead + AsyncWrite + 'static,
-          Kind: 'static
-{
-    type ServiceRequest = P::ServiceRequest;
-    type ServiceResponse = P::ServiceResponse;
-    type ServiceError = P::ServiceError;
-
-    fn bind_server<S>(&self, handle: &Handle, io: T, service: S)
-        where S: Service<Request = P::ServiceRequest,
-                         Response = P::ServiceResponse,
-                         Error = P::ServiceError> + 'static
-    {
-        let mut io = TimeoutStream::new(io, handle);
-        io.set_read_timeout(self.read_timeout);
-        io.set_write_timeout(self.write_timeout);
-        self.proto.bind_server(handle, io, service)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use futures::{future, Async, Stream};
@@ -576,7 +460,7 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let reader = DelayStream(Timeout::new(Duration::from_millis(500), &core.handle()).unwrap());
-        let mut reader = TimeoutReader::new(reader, &core.handle());
+        let mut reader = TimeoutReader::new(reader, &core.handle()).unwrap();
         reader.set_timeout(Some(Duration::from_millis(100)));
 
         let r = core.run(ReadFuture(reader));
@@ -588,7 +472,7 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let reader = DelayStream(Timeout::new(Duration::from_millis(100), &core.handle()).unwrap());
-        let mut reader = TimeoutReader::new(reader, &core.handle());
+        let mut reader = TimeoutReader::new(reader, &core.handle()).unwrap();
         reader.set_timeout(Some(Duration::from_millis(500)));
 
         core.run(ReadFuture(reader)).unwrap();
@@ -614,7 +498,7 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let writer = DelayStream(Timeout::new(Duration::from_millis(500), &core.handle()).unwrap());
-        let mut writer = TimeoutWriter::new(writer, &core.handle());
+        let mut writer = TimeoutWriter::new(writer, &core.handle()).unwrap();
         writer.set_timeout(Some(Duration::from_millis(100)));
 
         let r = core.run(WriteFuture(writer));
@@ -626,7 +510,7 @@ mod test {
         let mut core = Core::new().unwrap();
 
         let writer = DelayStream(Timeout::new(Duration::from_millis(100), &core.handle()).unwrap());
-        let mut writer = TimeoutWriter::new(writer, &core.handle());
+        let mut writer = TimeoutWriter::new(writer, &core.handle()).unwrap();
         writer.set_timeout(Some(Duration::from_millis(500)));
 
         core.run(WriteFuture(writer)).unwrap();
@@ -651,7 +535,7 @@ mod test {
 
         let f = TcpStream::connect(&addr, &handle)
             .and_then(|s| {
-                let mut s = TimeoutStream::new(s, &handle);
+                let mut s = TimeoutStream::new(s, &handle).unwrap();
                 s.set_read_timeout(Some(Duration::from_millis(100)));
                 ReadFuture(s)
             });

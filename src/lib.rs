@@ -19,12 +19,64 @@ use std::io::{self, Read, Write};
 use tokio_core::reactor::{Handle, Timeout};
 use tokio_io::{AsyncRead, AsyncWrite};
 
-/// An `AsyncRead`er which applies a timeout to read operations.
-pub struct TimeoutReader<R> {
-    reader: R,
+struct TimeoutState {
     timeout: Option<Duration>,
     cur: Timeout,
     active: bool,
+}
+
+impl TimeoutState {
+    fn new(handle: &Handle) -> io::Result<TimeoutState> {
+        Ok(TimeoutState {
+            timeout: None,
+            cur: Timeout::new(Duration::from_secs(0), handle)?,
+            active: false,
+        })
+    }
+
+    #[inline]
+    fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    #[inline]
+    fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.timeout = timeout;
+        self.reset();
+    }
+
+    #[inline]
+    fn reset(&mut self) {
+        if self.active {
+            self.active = false;
+            self.cur.reset(Instant::now());
+        }
+    }
+
+    #[inline]
+    fn check(&mut self) -> io::Result<()> {
+        let timeout = match self.timeout {
+            Some(timeout) => timeout,
+            None => return Ok(()),
+        };
+
+        if !self.active {
+            self.cur.reset(Instant::now() + timeout);
+            self.active = true;
+        }
+
+        if self.cur.poll()?.is_ready() {
+            Err(io::Error::from(io::ErrorKind::TimedOut))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// An `AsyncRead`er which applies a timeout to read operations.
+pub struct TimeoutReader<R> {
+    reader: R,
+    state: TimeoutState,
 }
 
 impl<R> TimeoutReader<R>
@@ -37,23 +89,20 @@ where
     pub fn new(reader: R, handle: &Handle) -> io::Result<TimeoutReader<R>> {
         Ok(TimeoutReader {
             reader,
-            timeout: None,
-            cur: Timeout::new(Duration::from_secs(0), handle)?,
-            active: false,
+            state: TimeoutState::new(handle)?,
         })
     }
 
     /// Returns the current read timeout.
     pub fn timeout(&self) -> Option<Duration> {
-        self.timeout
+        self.state.timeout()
     }
 
     /// Sets the read timeout.
     ///
     /// This will reset any pending timeout.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
-        self.timeout = timeout;
-        self.active = false;
+        self.state.set_timeout(timeout);
     }
 
     /// Returns a shared reference to the inner reader.
@@ -77,27 +126,11 @@ where
     R: AsyncRead,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.active {
-            if self.cur.poll()?.is_ready() {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
-            }
-        }
-
         let r = self.reader.read(buf);
-
-        match (&r, self.timeout) {
-            (&Err(ref e), Some(timeout))
-                if e.kind() == io::ErrorKind::WouldBlock && !self.active =>
-            {
-                self.active = true;
-                self.cur.reset(Instant::now() + timeout);
-                if self.cur.poll()?.is_ready() {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-            }
-            _ => {}
+        match r {
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => self.state.check()?,
+            _ => self.state.reset(),
         }
-
         r
     }
 }
@@ -111,25 +144,11 @@ where
     }
 
     fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        if self.active {
-            if self.cur.poll()?.is_ready() {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
-            }
-        }
-
         let r = self.reader.read_buf(buf);
-
-        match (&r, self.timeout) {
-            (&Ok(Async::NotReady), Some(timeout)) if !self.active => {
-                self.active = true;
-                self.cur.reset(Instant::now() + timeout);
-                if self.cur.poll()?.is_ready() {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-            }
-            _ => {}
+        match r {
+            Ok(Async::NotReady) => self.state.check()?,
+            _ => self.state.reset(),
         }
-
         r
     }
 }
@@ -163,9 +182,7 @@ where
 /// An `AsyncWrite`er which applies a timeout to write operations.
 pub struct TimeoutWriter<W> {
     writer: W,
-    timeout: Option<Duration>,
-    cur: Timeout,
-    active: bool,
+    state: TimeoutState,
 }
 
 impl<W> TimeoutWriter<W>
@@ -178,23 +195,20 @@ where
     pub fn new(writer: W, handle: &Handle) -> io::Result<TimeoutWriter<W>> {
         Ok(TimeoutWriter {
             writer,
-            timeout: None,
-            cur: Timeout::new(Duration::from_secs(0), handle)?,
-            active: false,
+            state: TimeoutState::new(handle)?,
         })
     }
 
     /// Returns the current write timeout.
     pub fn timeout(&self) -> Option<Duration> {
-        self.timeout
+        self.state.timeout()
     }
 
     /// Sets the write timeout.
     ///
     /// This will reset any pending timeout.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
-        self.timeout = timeout;
-        self.active = false;
+        self.state.set_timeout(timeout);
     }
 
     /// Returns a shared reference to the inner writer.
@@ -218,33 +232,21 @@ where
     W: AsyncWrite,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.active {
-            if self.cur.poll()?.is_ready() {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
-            }
-        }
-
         let r = self.writer.write(buf);
-
-        match (&r, self.timeout) {
-            (&Err(ref e), Some(timeout))
-                if e.kind() == io::ErrorKind::WouldBlock && !self.active =>
-            {
-                self.active = true;
-                self.cur.reset(Instant::now() + timeout);
-                if self.cur.poll()?.is_ready() {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-            }
-            _ => {}
+        match r {
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => self.state.check()?,
+            _ => self.state.reset(),
         }
-
         r
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // TODO should a timeout be applied here as well?
-        self.writer.flush()
+        let r = self.writer.flush();
+        match r {
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => self.state.check()?,
+            _ => self.state.reset(),
+        }
+        r
     }
 }
 
@@ -253,30 +255,20 @@ where
     W: AsyncWrite,
 {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
-        // TODO should a timeout be applied here as well?
-        self.writer.shutdown()
+        let r = self.writer.shutdown();
+        match r {
+            Ok(Async::NotReady) => self.state.check()?,
+            _ => self.state.reset(),
+        }
+        r
     }
 
     fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        if self.active {
-            if self.cur.poll()?.is_ready() {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
-            }
-        }
-
         let r = self.writer.write_buf(buf);
-
-        match (&r, self.timeout) {
-            (&Ok(Async::NotReady), Some(timeout)) if !self.active => {
-                self.active = true;
-                self.cur.reset(Instant::now() + timeout);
-                if self.cur.poll()?.is_ready() {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-            }
-            _ => {}
+        match r {
+            Ok(Async::NotReady) => self.state.check()?,
+            _ => self.state.reset(),
         }
-
         r
     }
 }

@@ -1,7 +1,7 @@
 # tokio-io-timeout
 [![CircleCI](https://circleci.com/gh/sfackler/tokio-io-timeout.svg?style=shield)](https://circleci.com/gh/sfackler/tokio-io-timeout)
 
-[Documentation](https://docs.rs/tokio-io-timeout/0.1.0/tokio_io_timeout)
+[Documentation](https://docs.rs/tokio-io-timeout)
 
 Tokio wrappers which apply timeouts to IO operations.
 

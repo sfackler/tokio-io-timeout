@@ -402,7 +402,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use futures::{Async, Stream};
+    use futures::Async;
     use tokio_core::reactor::Core;
     use tokio_core::net::TcpStream;
     use std::net::TcpListener;

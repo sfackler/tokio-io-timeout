@@ -295,7 +295,6 @@ where
 }
 
 /// A stream which applies read and write timeouts to an inner stream.
-// TODO this stores two copies of the Handle which is maybe not great?
 pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
 
 impl<S> TimeoutStream<S>

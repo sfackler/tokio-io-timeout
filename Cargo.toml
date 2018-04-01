@@ -10,5 +10,8 @@ readme = "README.md"
 [dependencies]
 bytes = "0.4.4"
 futures = "0.1.14"
-tokio-core = "0.1.10"
+tokio-timer = "0.2.0"
 tokio-io = "0.1.2"
+
+[dev-dependencies]
+tokio = "0.1.5"

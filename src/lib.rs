@@ -8,29 +8,32 @@
 #![warn(missing_docs)]
 extern crate bytes;
 extern crate futures;
-extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_timer;
+
+#[cfg(test)]
+extern crate tokio;
 
 use bytes::{Buf, BufMut};
 use futures::{Async, Future, Poll};
-use std::time::{Duration, Instant};
 use std::io::{self, Read, Write};
-use tokio_core::reactor::{Handle, Timeout};
+use std::time::{Duration, Instant};
 use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_timer::Delay;
 
 struct TimeoutState {
     timeout: Option<Duration>,
-    cur: Timeout,
+    cur: Delay,
     active: bool,
 }
 
 impl TimeoutState {
-    fn new(handle: &Handle) -> io::Result<TimeoutState> {
-        Ok(TimeoutState {
+    fn new() -> TimeoutState {
+        TimeoutState {
             timeout: None,
-            cur: Timeout::new(Duration::from_secs(0), handle)?,
+            cur: Delay::new(Instant::now()),
             active: false,
-        })
+        }
     }
 
     #[inline]
@@ -64,7 +67,11 @@ impl TimeoutState {
             self.active = true;
         }
 
-        if self.cur.poll()?.is_ready() {
+        if self.cur
+            .poll()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+            .is_ready()
+        {
             Err(io::Error::from(io::ErrorKind::TimedOut))
         } else {
             Ok(())
@@ -85,11 +92,11 @@ where
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
     /// There is initially no timeout.
-    pub fn new(reader: R, handle: &Handle) -> io::Result<TimeoutReader<R>> {
-        Ok(TimeoutReader {
+    pub fn new(reader: R) -> TimeoutReader<R> {
+        TimeoutReader {
             reader,
-            state: TimeoutState::new(handle)?,
-        })
+            state: TimeoutState::new(),
+        }
     }
 
     /// Returns the current read timeout.
@@ -191,11 +198,11 @@ where
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
     /// There is initially no timeout.
-    pub fn new(writer: W, handle: &Handle) -> io::Result<TimeoutWriter<W>> {
-        Ok(TimeoutWriter {
+    pub fn new(writer: W) -> TimeoutWriter<W> {
+        TimeoutWriter {
             writer,
-            state: TimeoutState::new(handle)?,
-        })
+            state: TimeoutState::new(),
+        }
     }
 
     /// Returns the current write timeout.
@@ -304,10 +311,10 @@ where
     /// Returns a new `TimeoutStream` wrapping the specified stream.
     ///
     /// There is initially no read or write timeout.
-    pub fn new(stream: S, handle: &Handle) -> io::Result<TimeoutStream<S>> {
-        let writer = TimeoutWriter::new(stream, handle)?;
-        let reader = TimeoutReader::new(writer, handle)?;
-        Ok(TimeoutStream(reader))
+    pub fn new(stream: S) -> TimeoutStream<S> {
+        let writer = TimeoutWriter::new(stream);
+        let reader = TimeoutReader::new(writer);
+        TimeoutStream(reader)
     }
 
     /// Returns the current read timeout.
@@ -400,20 +407,25 @@ where
 
 #[cfg(test)]
 mod test {
-    use futures::Async;
-    use tokio_core::reactor::Core;
-    use tokio_core::net::TcpStream;
-    use std::net::TcpListener;
+    use futures::sync::oneshot;
+    use futures::{Async, Future};
     use std::io::Write;
+    use std::net::TcpListener;
     use std::thread;
+    use tokio;
+    use tokio::net::TcpStream;
 
     use super::*;
 
-    struct DelayStream(Timeout);
+    struct DelayStream(Delay);
 
     impl Read for DelayStream {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.0.poll()?.is_ready() {
+            if self.0
+                .poll()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+                .is_ready()
+            {
                 buf[0] = 0;
                 Ok(1)
             } else {
@@ -430,7 +442,11 @@ mod test {
 
     impl Write for DelayStream {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.0.poll()?.is_ready() {
+            if self.0
+                .poll()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+                .is_ready()
+            {
                 Ok(buf.len())
             } else {
                 Err(io::Error::from(io::ErrorKind::WouldBlock))
@@ -472,27 +488,39 @@ mod test {
         }
     }
 
+    fn run<F>(f: F) -> Result<F::Item, F::Error>
+    where
+        F: Future + 'static + Send,
+        F::Item: Send,
+        F::Error: Send,
+    {
+        let (tx, rx) = oneshot::channel();
+        let f = f.then(|r| {
+            let _ = tx.send(r);
+            Ok(())
+        });
+        tokio::run(f);
+        rx.wait().unwrap()
+    }
+
     #[test]
     fn read_timeout() {
-        let mut core = Core::new().unwrap();
-
-        let reader = DelayStream(Timeout::new(Duration::from_millis(500), &core.handle()).unwrap());
-        let mut reader = TimeoutReader::new(reader, &core.handle()).unwrap();
+        let reader = DelayStream(Delay::new(Instant::now() + Duration::from_millis(500)));
+        let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
 
-        let r = core.run(ReadFuture(Some(reader)));
+        let r = run(ReadFuture(Some(reader)));
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]
     fn read_ok() {
-        let mut core = Core::new().unwrap();
-
-        let reader = DelayStream(Timeout::new(Duration::from_millis(100), &core.handle()).unwrap());
-        let mut reader = TimeoutReader::new(reader, &core.handle()).unwrap();
+        let reader = DelayStream(Delay::new(Instant::now() + Duration::from_millis(100)));
+        let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
 
-        core.run(ReadFuture(Some(reader))).unwrap();
+        let f = ReadFuture(Some(reader));
+        run(f).unwrap();
     }
 
     struct WriteFuture(TimeoutWriter<DelayStream>);
@@ -512,32 +540,25 @@ mod test {
 
     #[test]
     fn write_timeout() {
-        let mut core = Core::new().unwrap();
-
-        let writer = DelayStream(Timeout::new(Duration::from_millis(500), &core.handle()).unwrap());
-        let mut writer = TimeoutWriter::new(writer, &core.handle()).unwrap();
+        let writer = DelayStream(Delay::new(Instant::now() + Duration::from_millis(500)));
+        let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
 
-        let r = core.run(WriteFuture(writer));
-        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        let r = run(WriteFuture(writer));
+        assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]
     fn write_ok() {
-        let mut core = Core::new().unwrap();
-
-        let writer = DelayStream(Timeout::new(Duration::from_millis(100), &core.handle()).unwrap());
-        let mut writer = TimeoutWriter::new(writer, &core.handle()).unwrap();
+        let writer = DelayStream(Delay::new(Instant::now() + Duration::from_millis(100)));
+        let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
 
-        core.run(WriteFuture(writer)).unwrap();
+        run(WriteFuture(writer)).unwrap();
     }
 
     #[test]
     fn tcp_read() {
-        let mut core = Core::new().unwrap();
-        let handle = core.handle();
-
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -549,18 +570,18 @@ mod test {
             let _ = socket.write_all(b"f"); // this may hit an eof
         });
 
-        let f = TcpStream::connect(&addr, &handle).and_then(|s| {
-            let mut s = TimeoutStream::new(s, &handle).unwrap();
-            s.set_read_timeout(Some(Duration::from_millis(100)));
-            ReadFuture(Some(s))
-        });
-        let s = core.run(f).unwrap();
-
-        let f = ReadFuture(Some(s));
-        match core.run(f) {
-            Ok(_) => panic!("unexpected success"),
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {}
-            Err(e) => panic!("{:?}", e),
-        }
+        let f = TcpStream::connect(&addr)
+            .and_then(|s| {
+                let mut s = TimeoutStream::new(s);
+                s.set_read_timeout(Some(Duration::from_millis(100)));
+                ReadFuture(Some(s))
+            })
+            .and_then(|s| ReadFuture(Some(s)))
+            .then(|r| match r {
+                Ok(_) => panic!("unexpected success"),
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => Ok::<(), ()>(()),
+                Err(e) => panic!("{:?}", e),
+            });
+        run(f).unwrap();
     }
 }

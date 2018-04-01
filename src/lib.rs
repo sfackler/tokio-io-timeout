@@ -28,6 +28,7 @@ struct TimeoutState {
 }
 
 impl TimeoutState {
+    #[inline]
     fn new() -> TimeoutState {
         TimeoutState {
             timeout: None,

@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 
+#[derive(Debug)]
 struct TimeoutState {
     timeout: Option<Duration>,
     cur: Delay,
@@ -81,6 +82,7 @@ impl TimeoutState {
 }
 
 /// An `AsyncRead`er which applies a timeout to read operations.
+#[derive(Debug)]
 pub struct TimeoutReader<R> {
     reader: R,
     state: TimeoutState,
@@ -187,6 +189,7 @@ where
 }
 
 /// An `AsyncWrite`er which applies a timeout to write operations.
+#[derive(Debug)]
 pub struct TimeoutWriter<W> {
     writer: W,
     state: TimeoutState,
@@ -303,6 +306,7 @@ where
 }
 
 /// A stream which applies read and write timeouts to an inner stream.
+#[derive(Debug)]
 pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
 
 impl<S> TimeoutStream<S>

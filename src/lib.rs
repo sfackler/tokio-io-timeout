@@ -6,7 +6,6 @@
 //! the before the countdown expires, `TimedOut` is returned.
 #![doc(html_root_url = "https://docs.rs/tokio-io-timeout/0.3")]
 #![warn(missing_docs)]
-extern crate bytes;
 extern crate futures;
 extern crate tokio_io;
 extern crate tokio_timer;
@@ -14,12 +13,11 @@ extern crate tokio_timer;
 #[cfg(test)]
 extern crate tokio;
 
-use bytes::{Buf, BufMut};
-use futures::{Async, Future, Poll};
-use std::io::{self, Read, Write};
+use futures::{Future, task::Poll};
+use std::{io, pin::Pin, task::Context};
 use std::time::{Duration, Instant};
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_timer::Delay;
+use tokio_timer::{delay, Delay};
 
 #[derive(Debug)]
 struct TimeoutState {
@@ -33,7 +31,7 @@ impl TimeoutState {
     fn new() -> TimeoutState {
         TimeoutState {
             timeout: None,
-            cur: Delay::new(Instant::now()),
+            cur: delay(Instant::now()),
             active: false,
         }
     }
@@ -58,7 +56,7 @@ impl TimeoutState {
     }
 
     #[inline]
-    fn check(&mut self) -> io::Result<()> {
+    fn poll_check(&mut self, cx: &mut Context) -> io::Result<()> {
         let timeout = match self.timeout {
             Some(timeout) => timeout,
             None => return Ok(()),
@@ -69,14 +67,9 @@ impl TimeoutState {
             self.active = true;
         }
 
-        if self.cur
-            .poll()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
-            .is_ready()
-        {
-            Err(io::Error::from(io::ErrorKind::TimedOut))
-        } else {
-            Ok(())
+        match Pin::new(&mut self.cur).poll(cx) {
+            Poll::Ready(()) => Err(io::Error::from(io::ErrorKind::TimedOut)),
+            Poll::Pending => Ok(()),
         }
     }
 }
@@ -90,7 +83,7 @@ pub struct TimeoutReader<R> {
 
 impl<R> TimeoutReader<R>
 where
-    R: AsyncRead,
+    R: AsyncRead + Unpin,
 {
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
@@ -130,61 +123,49 @@ where
     }
 }
 
-impl<R> Read for TimeoutReader<R>
-where
-    R: AsyncRead,
-{
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let r = self.reader.read(buf);
-        match r {
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => self.state.check()?,
-            _ => self.state.reset(),
-        }
-        r
-    }
-}
-
 impl<R> AsyncRead for TimeoutReader<R>
 where
-    R: AsyncRead,
+    R: AsyncRead + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
-        self.reader.prepare_uninitialized_buffer(buf)
-    }
-
-    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        let r = self.reader.read_buf(buf);
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        let s = self.get_mut();
+        let r = Pin::new(&mut s.reader).poll_read(cx, buf);
         match r {
-            Ok(Async::NotReady) => self.state.check()?,
-            _ => self.state.reset(),
+            Poll::Pending => s.state.poll_check(cx)?,
+            _ => s.state.reset(),
         }
         r
-    }
-}
-
-impl<R> Write for TimeoutReader<R>
-where
-    R: Write,
-{
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.reader.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.reader.flush()
     }
 }
 
 impl<R> AsyncWrite for TimeoutReader<R>
 where
-    R: AsyncWrite,
+    R: AsyncWrite + Unpin,
 {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.reader.shutdown()
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.get_mut().reader).poll_shutdown(cx)
     }
 
-    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        self.reader.write_buf(buf)
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.get_mut().reader).poll_flush(cx)
+    }
+
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.get_mut().reader).poll_write(cx, buf)
     }
 }
 
@@ -237,71 +218,61 @@ where
     }
 }
 
-impl<W> Write for TimeoutWriter<W>
-where
-    W: AsyncWrite,
-{
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let r = self.writer.write(buf);
-        match r {
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => self.state.check()?,
-            _ => self.state.reset(),
-        }
-        r
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let r = self.writer.flush();
-        match r {
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => self.state.check()?,
-            _ => self.state.reset(),
-        }
-        r
-    }
-}
-
 impl<W> AsyncWrite for TimeoutWriter<W>
 where
-    W: AsyncWrite,
+    W: AsyncWrite + Unpin,
 {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        let r = self.writer.shutdown();
-        match r {
-            Ok(Async::NotReady) => self.state.check()?,
-            _ => self.state.reset(),
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        let s = self.get_mut();
+        let w = Pin::new(&mut s.writer).poll_shutdown(cx);
+        match w {
+            Poll::Pending => s.state.poll_check(cx)?,
+            _ => s.state.reset(),
         }
-        r
+        w
     }
 
-    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        let r = self.writer.write_buf(buf);
-        match r {
-            Ok(Async::NotReady) => self.state.check()?,
-            _ => self.state.reset(),
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        let s = self.get_mut();
+        let w = Pin::new(&mut s.writer).poll_flush(cx);
+        match w {
+            Poll::Pending => s.state.poll_check(cx)?,
+            _ => s.state.reset(),
         }
-        r
+        w
     }
-}
 
-impl<W> Read for TimeoutWriter<W>
-where
-    W: Read,
-{
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.writer.read(buf)
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        let s = self.get_mut();
+        let w = Pin::new(&mut s.writer).poll_write(cx, buf);
+        match w {
+            Poll::Pending => s.state.poll_check(cx)?,
+            _ => s.state.reset(),
+        }
+        w
     }
 }
 
 impl<W> AsyncRead for TimeoutWriter<W>
 where
-    W: AsyncRead,
+    W: AsyncRead + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
-        self.writer.prepare_uninitialized_buffer(buf)
-    }
-
-    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        self.writer.read_buf(buf)
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.get_mut().writer).poll_read(cx, buf)
     }
 }
 
@@ -311,7 +282,7 @@ pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
 
 impl<S> TimeoutStream<S>
 where
-    S: AsyncRead + AsyncWrite,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Returns a new `TimeoutStream` wrapping the specified stream.
     ///
@@ -362,204 +333,173 @@ where
     }
 }
 
-impl<S> Read for TimeoutStream<S>
-where
-    S: AsyncRead + AsyncWrite,
-{
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
 impl<S> AsyncRead for TimeoutStream<S>
 where
-    S: AsyncRead + AsyncWrite,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
-        self.0.prepare_uninitialized_buffer(buf)
-    }
-
-    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        self.0.read_buf(buf)
-    }
-}
-
-impl<S> Write for TimeoutStream<S>
-where
-    S: AsyncRead + AsyncWrite,
-{
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
     }
 }
 
 impl<S> AsyncWrite for TimeoutStream<S>
 where
-    S: AsyncRead + AsyncWrite,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.0.shutdown()
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
     }
 
-    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        self.0.write_buf(buf)
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_flush(cx)
+    }
+
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use futures::sync::oneshot;
-    use futures::{Async, Future};
+    use futures::{
+        executor::block_on,
+        task::Poll,
+        channel::oneshot,
+        future::Future,
+    };
     use std::io::Write;
     use std::net::TcpListener;
     use std::thread;
-    use tokio;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
     use super::*;
 
     struct DelayStream(Delay);
 
-    impl Read for DelayStream {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.0
-                .poll()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
-                .is_ready()
-            {
-                buf[0] = 0;
-                Ok(1)
-            } else {
-                Err(io::Error::from(io::ErrorKind::WouldBlock))
-            }
-        }
-    }
-
     impl AsyncRead for DelayStream {
-        unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
-            true
-        }
-    }
-
-    impl Write for DelayStream {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.0
-                .poll()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
-                .is_ready()
-            {
-                Ok(buf.len())
-            } else {
-                Err(io::Error::from(io::ErrorKind::WouldBlock))
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            _buf: &mut [u8],
+        ) -> Poll<Result<usize, io::Error>> {
+            let s = self.get_mut();
+            match Pin::new(&mut s.0).poll(cx) {
+                Poll::Ready(()) => Poll::Ready(Ok(1)),
+                Poll::Pending => Poll::Pending,
             }
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
         }
     }
 
     impl AsyncWrite for DelayStream {
-        fn shutdown(&mut self) -> Poll<(), io::Error> {
-            Ok(Async::Ready(()))
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            _cx: &mut Context,
+        ) -> Poll<Result<(), io::Error>> {
+            Poll::Ready(Ok(()))
         }
-    }
 
-    struct ReadFuture<S>(Option<S>);
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut Context,
+        ) -> Poll<Result<(), io::Error>> {
+            Poll::Ready(Ok(()))
+        }
 
-    impl<S> Future for ReadFuture<S>
-    where
-        S: AsyncRead,
-    {
-        type Item = S;
-        type Error = io::Error;
-
-        fn poll(&mut self) -> Poll<S, io::Error> {
-            let mut reader = self.0.take().unwrap();
-
-            let mut buf = [0; 1];
-            match reader.read(&mut buf) {
-                Ok(_) => Ok(Async::Ready(reader)),
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    self.0 = Some(reader);
-                    Ok(Async::NotReady)
-                }
-                Err(e) => Err(e),
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize, io::Error>> {
+            let s = self.get_mut();
+            match Pin::new(&mut s.0).poll(cx) {
+                Poll::Ready(()) => Poll::Ready(Ok(buf.len())),
+                Poll::Pending => Poll::Pending,
             }
         }
     }
 
-    fn run<F>(f: F) -> Result<F::Item, F::Error>
+    async fn read_one<R>(mut reader: R) -> Result<usize, io::Error>
+    where
+        R: AsyncRead + Unpin,
+    {
+        let mut buf: [u8; 1] = [0; 1];
+        reader.read(&mut buf).await
+    }
+
+    fn run<F>(f: F) -> F::Output
     where
         F: Future + 'static + Send,
-        F::Item: Send,
-        F::Error: Send,
+        F::Output: Send,
     {
         let (tx, rx) = oneshot::channel();
-        let f = f.then(|r| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            let r = f.await;
             let _ = tx.send(r);
-            Ok(())
+            ()
         });
-        tokio::run(f);
-        rx.wait().unwrap()
+
+        block_on(rx).unwrap()
     }
 
     #[test]
     fn read_timeout() {
-        let reader = DelayStream(Delay::new(Instant::now() + Duration::from_millis(500)));
+        let reader = DelayStream(delay(Instant::now() + Duration::from_millis(500)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
 
-        let r = run(ReadFuture(Some(reader)));
+        let r = run(read_one(reader));
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]
     fn read_ok() {
-        let reader = DelayStream(Delay::new(Instant::now() + Duration::from_millis(100)));
+        let reader = DelayStream(delay(Instant::now() + Duration::from_millis(100)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
 
-        let f = ReadFuture(Some(reader));
-        run(f).unwrap();
+        run(read_one(reader)).unwrap();
     }
 
-    struct WriteFuture(TimeoutWriter<DelayStream>);
-
-    impl Future for WriteFuture {
-        type Item = ();
-        type Error = io::Error;
-
-        fn poll(&mut self) -> Poll<(), io::Error> {
-            match self.0.write(&[0]) {
-                Ok(_) => Ok(Async::Ready(())),
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(Async::NotReady),
-                Err(e) => Err(e),
-            }
-        }
+    async fn write_one<W>(mut writer: W) -> Result<(), io::Error>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        writer.write_all(&[0]).await
     }
 
     #[test]
     fn write_timeout() {
-        let writer = DelayStream(Delay::new(Instant::now() + Duration::from_millis(500)));
+        let writer = DelayStream(delay(Instant::now() + Duration::from_millis(500)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
 
-        let r = run(WriteFuture(writer));
+        let r = run(write_one(writer));
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]
     fn write_ok() {
-        let writer = DelayStream(Delay::new(Instant::now() + Duration::from_millis(100)));
+        let writer = DelayStream(delay(Instant::now() + Duration::from_millis(100)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
 
-        run(WriteFuture(writer)).unwrap();
+        run(write_one(writer)).unwrap();
     }
 
     #[test]
@@ -575,18 +515,22 @@ mod test {
             let _ = socket.write_all(b"f"); // this may hit an eof
         });
 
-        let f = TcpStream::connect(&addr)
-            .and_then(|s| {
-                let mut s = TimeoutStream::new(s);
-                s.set_read_timeout(Some(Duration::from_millis(100)));
-                ReadFuture(Some(s))
-            })
-            .and_then(|s| ReadFuture(Some(s)))
-            .then(|r| match r {
+        let f = async move {
+            let mut buf: [u8; 1] = [0; 1];
+            let s = TcpStream::connect(&addr).await?;
+            let mut s = TimeoutStream::new(s);
+            s.set_read_timeout(Some(Duration::from_millis(100)));
+            let _ = s.read(&mut buf).await?;
+            let r = s.read(&mut buf).await;
+
+            match r {
                 Ok(_) => panic!("unexpected success"),
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => Ok::<(), ()>(()),
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
+                    Ok::<(), io::Error>(())
+                }
                 Err(e) => panic!("{:?}", e),
-            });
+            }
+        };
         run(f).unwrap();
     }
 }

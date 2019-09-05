@@ -23,15 +23,16 @@ jobs:
   build:
     working_directory: ~/build
     docker:
-      - image: rust:nightly
+      - image: rust:latest
         environment:
           RUSTFLAGS: -D warnings
     steps:
       - checkout
+      - run: rustup toolchain install nightly
       - *RESTORE_REGISTRY
-      - run: cargo generate-lockfile
+      - run: rustup run nightly cargo generate-lockfile
       - *SAVE_REGISTRY
-      - run: rustc --version > ~/rust-version
+      - run: rustup run nightly rustc --version > ~/rust-version
       - *RESTORE_DEPS
-      - run: cargo test
+      - run: rustup run cargo test
       - *SAVE_DEPS

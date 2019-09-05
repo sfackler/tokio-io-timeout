@@ -23,7 +23,7 @@ jobs:
   build:
     working_directory: ~/build
     docker:
-      - image: rust:1.21.0
+      - image: rust:nightly
         environment:
           RUSTFLAGS: -D warnings
     steps:

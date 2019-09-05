@@ -34,5 +34,5 @@ jobs:
       - *SAVE_REGISTRY
       - run: rustup run nightly rustc --version > ~/rust-version
       - *RESTORE_DEPS
-      - run: rustup run cargo test
+      - run: rustup run nightly cargo test
       - *SAVE_DEPS

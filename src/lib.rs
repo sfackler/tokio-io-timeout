@@ -375,12 +375,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use futures::{
-        executor::block_on,
-        task::Poll,
-        channel::oneshot,
-        future::Future,
-    };
+    use futures::{task::Poll, future::Future};
     use std::io::Write;
     use std::net::TcpListener;
     use std::thread;
@@ -441,39 +436,23 @@ mod test {
         reader.read(&mut buf).await
     }
 
-    fn run<F>(f: F) -> F::Output
-    where
-        F: Future + 'static + Send,
-        F::Output: Send,
-    {
-        let (tx, rx) = oneshot::channel();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async move {
-            let r = f.await;
-            let _ = tx.send(r);
-            ()
-        });
-
-        block_on(rx).unwrap()
-    }
-
-    #[test]
-    fn read_timeout() {
+    #[tokio::test]
+    async fn read_timeout() {
         let reader = DelayStream(delay(Instant::now() + Duration::from_millis(500)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
 
-        let r = run(read_one(reader));
+        let r = read_one(reader).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
-    #[test]
-    fn read_ok() {
+    #[tokio::test]
+    async fn read_ok() {
         let reader = DelayStream(delay(Instant::now() + Duration::from_millis(100)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
 
-        run(read_one(reader)).unwrap();
+        read_one(reader).await.unwrap();
     }
 
     async fn write_one<W>(mut writer: W) -> Result<(), io::Error>
@@ -483,27 +462,27 @@ mod test {
         writer.write_all(&[0]).await
     }
 
-    #[test]
-    fn write_timeout() {
+    #[tokio::test]
+    async fn write_timeout() {
         let writer = DelayStream(delay(Instant::now() + Duration::from_millis(500)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
 
-        let r = run(write_one(writer));
+        let r = write_one(writer).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
-    #[test]
-    fn write_ok() {
+    #[tokio::test]
+    async fn write_ok() {
         let writer = DelayStream(delay(Instant::now() + Duration::from_millis(100)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
 
-        run(write_one(writer)).unwrap();
+        write_one(writer).await.unwrap();
     }
 
-    #[test]
-    fn tcp_read() {
+    #[tokio::test]
+    async fn tcp_read() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -515,22 +494,16 @@ mod test {
             let _ = socket.write_all(b"f"); // this may hit an eof
         });
 
-        let f = async move {
-            let mut buf: [u8; 1] = [0; 1];
-            let s = TcpStream::connect(&addr).await?;
-            let mut s = TimeoutStream::new(s);
-            s.set_read_timeout(Some(Duration::from_millis(100)));
-            let _ = s.read(&mut buf).await?;
-            let r = s.read(&mut buf).await;
+        let s = TcpStream::connect(&addr).await.unwrap();
+        let mut s = TimeoutStream::new(s);
+        s.set_read_timeout(Some(Duration::from_millis(100)));
+        let _ = read_one(&mut s).await.unwrap();
+        let r = read_one(&mut s).await;
 
-            match r {
-                Ok(_) => panic!("unexpected success"),
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                    Ok::<(), io::Error>(())
-                }
-                Err(e) => panic!("{:?}", e),
-            }
-        };
-        run(f).unwrap();
+        match r {
+            Ok(_) => panic!("unexpected success"),
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+            Err(e) => panic!("{:?}", e),
+        }
     }
 }

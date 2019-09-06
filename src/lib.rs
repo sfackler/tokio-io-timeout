@@ -143,7 +143,7 @@ where
     }
 
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
-        return self.reader.prepare_uninitialized_buffer(buf);
+        self.reader.prepare_uninitialized_buffer(buf)
     }
 
     fn poll_read_buf<B>(

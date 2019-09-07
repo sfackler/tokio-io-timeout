@@ -128,37 +128,35 @@ impl<R> AsyncRead for TimeoutReader<R>
 where
     R: AsyncRead + Unpin,
 {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        let s = self.get_mut();
-        let r = Pin::new(&mut s.reader).poll_read(cx, buf);
-        match r {
-            Poll::Pending => s.state.poll_check(cx)?,
-            _ => s.state.reset(),
-        }
-        r
-    }
-
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
         self.reader.prepare_uninitialized_buffer(buf)
     }
 
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        let r = Pin::new(&mut self.reader).poll_read(cx, buf);
+        match r {
+            Poll::Pending => self.state.poll_check(cx)?,
+            _ => self.state.reset(),
+        }
+        r
+    }
+
     fn poll_read_buf<B>(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut B,
     ) -> Poll<Result<usize, io::Error>>
     where
         B: BufMut,
     {
-        let s = self.get_mut();
-        let r = Pin::new(&mut s.reader).poll_read_buf(cx, buf);
+        let r = Pin::new(&mut self.reader).poll_read_buf(cx, buf);
         match r {
-            Poll::Pending => s.state.poll_check(cx)?,
-            _ => s.state.reset(),
+            Poll::Pending => self.state.poll_check(cx)?,
+            _ => self.state.reset(),
         }
         r
     }
@@ -168,38 +166,37 @@ impl<R> AsyncWrite for TimeoutReader<R>
 where
     R: AsyncWrite + Unpin,
 {
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.get_mut().reader).poll_shutdown(cx)
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.get_mut().reader).poll_flush(cx)
-    }
-
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.get_mut().reader).poll_write(cx, buf)
+        Pin::new(&mut self.reader).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.reader).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.reader).poll_shutdown(cx)
     }
 
     fn poll_write_buf<B>(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut B
     ) -> Poll<Result<usize, io::Error>>
     where
         B: Buf,
     {
-        let s = self.get_mut();
-        Pin::new(&mut s.reader).poll_write_buf(cx, buf)
+        Pin::new(&mut self.reader).poll_write_buf(cx, buf)
     }
 }
 
@@ -256,59 +253,55 @@ impl<W> AsyncWrite for TimeoutWriter<W>
 where
     W: AsyncWrite + Unpin,
 {
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
+    fn poll_write(
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
-        let s = self.get_mut();
-        let r = Pin::new(&mut s.writer).poll_shutdown(cx);
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        let r = Pin::new(&mut self.writer).poll_write(cx, buf);
         match r {
-            Poll::Pending => s.state.poll_check(cx)?,
-            _ => s.state.reset(),
+            Poll::Pending => self.state.poll_check(cx)?,
+            _ => self.state.reset(),
         }
         r
     }
 
     fn poll_flush(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> Poll<Result<(), io::Error>> {
-        let s = self.get_mut();
-        let r = Pin::new(&mut s.writer).poll_flush(cx);
+        let r = Pin::new(&mut self.writer).poll_flush(cx);
         match r {
-            Poll::Pending => s.state.poll_check(cx)?,
-            _ => s.state.reset(),
+            Poll::Pending => self.state.poll_check(cx)?,
+            _ => self.state.reset(),
         }
         r
     }
 
-    fn poll_write(
-        self: Pin<&mut Self>,
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        let s = self.get_mut();
-        let r = Pin::new(&mut s.writer).poll_write(cx, buf);
+    ) -> Poll<Result<(), io::Error>> {
+        let r = Pin::new(&mut self.writer).poll_shutdown(cx);
         match r {
-            Poll::Pending => s.state.poll_check(cx)?,
-            _ => s.state.reset(),
+            Poll::Pending => self.state.poll_check(cx)?,
+            _ => self.state.reset(),
         }
         r
     }
 
     fn poll_write_buf<B>(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut B
     ) -> Poll<Result<usize, io::Error>>
     where
         B: Buf,
     {
-        let s = self.get_mut();
-        let r = Pin::new(&mut s.writer).poll_write_buf(cx, buf);
+        let r = Pin::new(&mut self.writer).poll_write_buf(cx, buf);
         match r {
-            Poll::Pending => s.state.poll_check(cx)?,
-            _ => s.state.reset(),
+            Poll::Pending => self.state.poll_check(cx)?,
+            _ => self.state.reset(),
         }
         r
     }
@@ -318,28 +311,27 @@ impl<W> AsyncRead for TimeoutWriter<W>
 where
     W: AsyncRead + Unpin,
 {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.get_mut().writer).poll_read(cx, buf)
-    }
-
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
         return self.writer.prepare_uninitialized_buffer(buf);
     }
 
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.writer).poll_read(cx, buf)
+    }
+
     fn poll_read_buf<B>(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut B,
     ) -> Poll<Result<usize, io::Error>>
     where
         B: BufMut,
     {
-        let s = self.get_mut();
-        Pin::new(&mut s.writer).poll_read_buf(cx, buf)
+        Pin::new(&mut self.writer).poll_read_buf(cx, buf)
     }
 }
 
@@ -404,28 +396,27 @@ impl<S> AsyncRead for TimeoutStream<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
-    }
-
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
         self.0.prepare_uninitialized_buffer(buf)
     }
 
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+
     fn poll_read_buf<B>(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut B,
     ) -> Poll<Result<usize, io::Error>>
     where
         B: BufMut,
     {
-        let s = self.get_mut();
-        Pin::new(&mut s.0).poll_read_buf(cx, buf)
+        Pin::new(&mut self.0).poll_read_buf(cx, buf)
     }
 }
 
@@ -433,38 +424,37 @@ impl<S> AsyncWrite for TimeoutStream<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_flush(cx)
-    }
-
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
     }
 
     fn poll_write_buf<B>(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut B,
     ) -> Poll<Result<usize, io::Error>>
     where
         B: Buf,
     {
-        let s = self.get_mut();
-        Pin::new(&mut s.0).poll_write_buf(cx, buf)
+        Pin::new(&mut self.0).poll_write_buf(cx, buf)
     }
 }
 
@@ -483,12 +473,11 @@ mod test {
 
     impl AsyncRead for DelayStream {
         fn poll_read(
-            self: Pin<&mut Self>,
+            mut self: Pin<&mut Self>,
             cx: &mut Context,
             _buf: &mut [u8],
         ) -> Poll<Result<usize, io::Error>> {
-            let s = self.get_mut();
-            match Pin::new(&mut s.0).poll(cx) {
+            match Pin::new(&mut self.0).poll(cx) {
                 Poll::Ready(()) => Poll::Ready(Ok(1)),
                 Poll::Pending => Poll::Pending,
             }
@@ -496,11 +485,15 @@ mod test {
     }
 
     impl AsyncWrite for DelayStream {
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            _cx: &mut Context,
-        ) -> Poll<Result<(), io::Error>> {
-            Poll::Ready(Ok(()))
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize, io::Error>> {
+            match Pin::new(&mut self.0).poll(cx) {
+                Poll::Ready(()) => Poll::Ready(Ok(buf.len())),
+                Poll::Pending => Poll::Pending,
+            }
         }
 
         fn poll_flush(
@@ -510,16 +503,11 @@ mod test {
             Poll::Ready(Ok(()))
         }
 
-        fn poll_write(
+        fn poll_shutdown(
             self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: &[u8],
-        ) -> Poll<Result<usize, io::Error>> {
-            let s = self.get_mut();
-            match Pin::new(&mut s.0).poll(cx) {
-                Poll::Ready(()) => Poll::Ready(Ok(buf.len())),
-                Poll::Pending => Poll::Pending,
-            }
+            _cx: &mut Context,
+        ) -> Poll<Result<(), io::Error>> {
+            Poll::Ready(Ok(()))
         }
     }
 

@@ -6,16 +6,12 @@
 //! the before the countdown expires, `TimedOut` is returned.
 #![doc(html_root_url = "https://docs.rs/tokio-io-timeout/0.3")]
 #![warn(missing_docs)]
-extern crate futures;
-extern crate tokio_io;
-extern crate tokio_timer;
-
-#[cfg(test)]
-extern crate tokio;
 
 use bytes::{Buf, BufMut};
-use futures::{Future, task::Poll};
-use std::{io, pin::Pin, task::Context};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::{delay, Delay};
@@ -128,7 +124,7 @@ impl<R> AsyncRead for TimeoutReader<R>
 where
     R: AsyncRead + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.reader.prepare_uninitialized_buffer(buf)
     }
 
@@ -174,24 +170,18 @@ where
         Pin::new(&mut self.reader).poll_write(cx, buf)
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.reader).poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.reader).poll_shutdown(cx)
     }
 
     fn poll_write_buf<B>(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-        buf: &mut B
+        buf: &mut B,
     ) -> Poll<Result<usize, io::Error>>
     where
         B: Buf,
@@ -266,10 +256,7 @@ where
         r
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         let r = Pin::new(&mut self.writer).poll_flush(cx);
         match r {
             Poll::Pending => self.state.poll_check(cx)?,
@@ -278,10 +265,7 @@ where
         r
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         let r = Pin::new(&mut self.writer).poll_shutdown(cx);
         match r {
             Poll::Pending => self.state.poll_check(cx)?,
@@ -293,7 +277,7 @@ where
     fn poll_write_buf<B>(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-        buf: &mut B
+        buf: &mut B,
     ) -> Poll<Result<usize, io::Error>>
     where
         B: Buf,
@@ -311,7 +295,7 @@ impl<W> AsyncRead for TimeoutWriter<W>
 where
     W: AsyncRead + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         return self.writer.prepare_uninitialized_buffer(buf);
     }
 
@@ -396,7 +380,7 @@ impl<S> AsyncRead for TimeoutStream<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut[u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.0.prepare_uninitialized_buffer(buf)
     }
 
@@ -432,17 +416,11 @@ where
         Pin::new(&mut self.0).poll_write(cx, buf)
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.0).poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.0).poll_shutdown(cx)
     }
 
@@ -460,7 +438,6 @@ where
 
 #[cfg(test)]
 mod test {
-    use futures::{task::Poll, future::Future};
     use std::io::Write;
     use std::net::TcpListener;
     use std::thread;
@@ -496,17 +473,11 @@ mod test {
             }
         }
 
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            _cx: &mut Context,
-        ) -> Poll<Result<(), io::Error>> {
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), io::Error>> {
             Poll::Ready(Ok(()))
         }
 
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            _cx: &mut Context,
-        ) -> Poll<Result<(), io::Error>> {
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), io::Error>> {
             Poll::Ready(Ok(()))
         }
     }

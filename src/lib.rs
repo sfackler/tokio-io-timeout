@@ -4,7 +4,7 @@
 //! blocking sockets. A timeout countdown is initiated when a read/write
 //! operation returns `WouldBlock`. If a read/write does not return successfully
 //! the before the countdown expires, `TimedOut` is returned.
-#![doc(html_root_url = "https://docs.rs/tokio-io-timeout/0.3")]
+#![doc(html_root_url = "https://docs.rs/tokio-io-timeout/0.4")]
 #![warn(missing_docs)]
 
 use bytes::{Buf, BufMut};

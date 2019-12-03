@@ -1,6 +1,6 @@
 [package]
 name = "tokio-io-timeout"
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 license = "MIT/Apache-2.0"
 description = "Tokio wrappers which apply timeouts to IO operations"
@@ -9,9 +9,8 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-bytes = "0.4.4"
-tokio-timer = "=0.3.0-alpha.6"
-tokio-io = "=0.2.0-alpha.6"
+bytes = "0.5"
+tokio = { version = "0.2", features = ["time"] }
 
 [dev-dependencies]
-tokio = "=0.2.0-alpha.6"
+tokio = { version = "0.2", features = ["full"] }

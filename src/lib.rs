@@ -12,9 +12,10 @@ use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_timer::{delay, Delay};
+use std::time::{Duration};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::{delay_until, Delay, Instant};
+use std::mem::MaybeUninit;
 
 #[derive(Debug)]
 struct TimeoutState {
@@ -28,7 +29,7 @@ impl TimeoutState {
     fn new() -> TimeoutState {
         TimeoutState {
             timeout: None,
-            cur: delay(Instant::now()),
+            cur: delay_until(Instant::now()),
             active: false,
         }
     }
@@ -124,7 +125,7 @@ impl<R> AsyncRead for TimeoutReader<R>
 where
     R: AsyncRead + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
         self.reader.prepare_uninitialized_buffer(buf)
     }
 
@@ -295,7 +296,7 @@ impl<W> AsyncRead for TimeoutWriter<W>
 where
     W: AsyncRead + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
         return self.writer.prepare_uninitialized_buffer(buf);
     }
 
@@ -380,7 +381,7 @@ impl<S> AsyncRead for TimeoutStream<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
         self.0.prepare_uninitialized_buffer(buf)
     }
 
@@ -492,7 +493,7 @@ mod test {
 
     #[tokio::test]
     async fn read_timeout() {
-        let reader = DelayStream(delay(Instant::now() + Duration::from_millis(500)));
+        let reader = DelayStream(delay_until(Instant::now() + Duration::from_millis(500)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
 
@@ -502,7 +503,7 @@ mod test {
 
     #[tokio::test]
     async fn read_ok() {
-        let reader = DelayStream(delay(Instant::now() + Duration::from_millis(100)));
+        let reader = DelayStream(delay_until(Instant::now() + Duration::from_millis(100)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
 
@@ -518,7 +519,7 @@ mod test {
 
     #[tokio::test]
     async fn write_timeout() {
-        let writer = DelayStream(delay(Instant::now() + Duration::from_millis(500)));
+        let writer = DelayStream(delay_until(Instant::now() + Duration::from_millis(500)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
 
@@ -528,7 +529,7 @@ mod test {
 
     #[tokio::test]
     async fn write_ok() {
-        let writer = DelayStream(delay(Instant::now() + Duration::from_millis(100)));
+        let writer = DelayStream(delay_until(Instant::now() + Duration::from_millis(100)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
 

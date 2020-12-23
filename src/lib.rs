@@ -294,7 +294,7 @@ pub struct TimeoutStream<S> {
 
 impl<S> TimeoutStream<S>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite,
 {
     /// Returns a new `TimeoutStream` wrapping the specified stream.
     ///
@@ -352,7 +352,7 @@ where
 
 impl<S> AsyncRead for TimeoutStream<S>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -365,7 +365,7 @@ where
 
 impl<S> AsyncWrite for TimeoutStream<S>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite,
 {
     fn poll_write(
         self: Pin<&mut Self>,

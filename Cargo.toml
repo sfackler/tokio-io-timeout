@@ -9,7 +9,7 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-pin-project = "1.0"
+pin-project-lite = "0.2"
 tokio = { version = "1.0", features = ["time"] }
 
 [dev-dependencies]

@@ -10,19 +10,20 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::time::{sleep_until, Instant, Sleep};
 
-#[pin_project]
-#[derive(Debug)]
-struct TimeoutState {
-    timeout: Option<Duration>,
-    #[pin]
-    cur: Sleep,
-    active: bool,
+pin_project! {
+    #[derive(Debug)]
+    struct TimeoutState {
+        timeout: Option<Duration>,
+        #[pin]
+        cur: Sleep,
+        active: bool,
+    }
 }
 
 impl TimeoutState {
@@ -77,14 +78,15 @@ impl TimeoutState {
     }
 }
 
-/// An `AsyncRead`er which applies a timeout to read operations.
-#[pin_project]
-#[derive(Debug)]
-pub struct TimeoutReader<R> {
-    #[pin]
-    reader: R,
-    #[pin]
-    state: TimeoutState,
+pin_project! {
+    /// An `AsyncRead`er which applies a timeout to read operations.
+    #[derive(Debug)]
+    pub struct TimeoutReader<R> {
+        #[pin]
+        reader: R,
+        #[pin]
+        state: TimeoutState,
+    }
 }
 
 impl<R> TimeoutReader<R>
@@ -174,14 +176,15 @@ where
     }
 }
 
-/// An `AsyncWrite`er which applies a timeout to write operations.
-#[pin_project]
-#[derive(Debug)]
-pub struct TimeoutWriter<W> {
-    #[pin]
-    writer: W,
-    #[pin]
-    state: TimeoutState,
+pin_project! {
+    /// An `AsyncWrite`er which applies a timeout to write operations.
+    #[derive(Debug)]
+    pub struct TimeoutWriter<W> {
+        #[pin]
+        writer: W,
+        #[pin]
+        state: TimeoutState,
+    }
 }
 
 impl<W> TimeoutWriter<W>
@@ -284,12 +287,13 @@ where
 
 }
 
-/// A stream which applies read and write timeouts to an inner stream.
-#[pin_project]
-#[derive(Debug)]
-pub struct TimeoutStream<S> {
-    #[pin]
-    stream: TimeoutReader<TimeoutWriter<S>>
+pin_project! {
+    /// A stream which applies read and write timeouts to an inner stream.
+    #[derive(Debug)]
+    pub struct TimeoutStream<S> {
+        #[pin]
+        stream: TimeoutReader<TimeoutWriter<S>>
+    }
 }
 
 impl<S> TimeoutStream<S>
@@ -394,8 +398,20 @@ mod test {
     use tokio::pin;
     use super::*;
 
-    #[pin_project]
-    struct DelayStream(#[pin] Sleep);
+    pin_project! {
+        struct DelayStream {
+            #[pin]
+            sleep: Sleep,
+        }
+    }
+
+    impl DelayStream {
+        fn new(until: Instant) -> Self {
+            DelayStream {
+                sleep: sleep_until(until),
+            }
+        }
+    }
 
     impl AsyncRead for DelayStream {
         fn poll_read(
@@ -403,7 +419,7 @@ mod test {
             cx: &mut Context,
             _buf: &mut ReadBuf,
         ) -> Poll<Result<(), io::Error>> {
-            match self.project().0.poll(cx) {
+            match self.project().sleep.poll(cx) {
                 Poll::Ready(()) => Poll::Ready(Ok(())),
                 Poll::Pending => Poll::Pending,
             }
@@ -416,7 +432,7 @@ mod test {
             cx: &mut Context,
             buf: &[u8],
         ) -> Poll<Result<usize, io::Error>> {
-            match self.project().0.poll(cx) {
+            match self.project().sleep.poll(cx) {
                 Poll::Ready(()) => Poll::Ready(Ok(buf.len())),
                 Poll::Pending => Poll::Pending,
             }
@@ -433,7 +449,7 @@ mod test {
 
     #[tokio::test]
     async fn read_timeout() {
-        let reader = DelayStream(sleep_until(Instant::now() + Duration::from_millis(500)));
+        let reader = DelayStream::new(Instant::now() + Duration::from_millis(500));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
         pin!(reader);
@@ -444,7 +460,7 @@ mod test {
 
     #[tokio::test]
     async fn read_ok() {
-        let reader = DelayStream(sleep_until(Instant::now() + Duration::from_millis(100)));
+        let reader = DelayStream::new(Instant::now() + Duration::from_millis(100));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
         pin!(reader);
@@ -454,7 +470,7 @@ mod test {
 
     #[tokio::test]
     async fn write_timeout() {
-        let writer = DelayStream(sleep_until(Instant::now() + Duration::from_millis(500)));
+        let writer = DelayStream::new(Instant::now() + Duration::from_millis(500));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
         pin!(writer);
@@ -465,7 +481,7 @@ mod test {
 
     #[tokio::test]
     async fn write_ok() {
-        let writer = DelayStream(sleep_until(Instant::now() + Duration::from_millis(100)));
+        let writer = DelayStream::new(Instant::now() + Duration::from_millis(100));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
         pin!(writer);

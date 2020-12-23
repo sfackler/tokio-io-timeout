@@ -13,5 +13,4 @@ pin-project = "1.0"
 tokio = { version = "1.0", features = ["time"] }
 
 [dev-dependencies]
-futures = "0.3"
 tokio = { version = "1.0", features = ["full"] }

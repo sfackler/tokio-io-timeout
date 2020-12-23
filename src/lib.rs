@@ -123,6 +123,11 @@ where
         &mut self.reader
     }
 
+    /// Returns a pinned mutable reference to the inner reader.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut R> {
+        self.project().reader
+    }
+
     /// Consumes the `TimeoutReader`, returning the inner reader.
     pub fn into_inner(self) -> R {
         self.reader
@@ -213,6 +218,11 @@ where
     /// Returns a mutable reference to the inner writer.
     pub fn get_mut(&mut self) -> &mut W {
         &mut self.writer
+    }
+
+    /// Returns a pinned mutable reference to the inner writer.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut W> {
+        self.project().writer
     }
 
     /// Consumes the `TimeoutWriter`, returning the inner writer.
@@ -329,6 +339,11 @@ where
         self.stream.get_mut().get_mut()
     }
 
+    /// Returns a pinned mutable reference to the inner stream.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut S> {
+        self.project().stream.get_pin_mut().get_pin_mut()
+    }
+
     /// Consumes the stream, returning the inner stream.
     pub fn into_inner(self) -> S {
         self.stream.into_inner().into_inner()
@@ -375,8 +390,8 @@ mod test {
     use std::net::TcpListener;
     use std::thread;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use futures::pin_mut;
     use tokio::net::TcpStream;
+    use tokio::pin;
     use super::*;
 
     #[pin_project]
@@ -421,7 +436,7 @@ mod test {
         let reader = DelayStream(sleep_until(Instant::now() + Duration::from_millis(500)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
-        pin_mut!(reader);
+        pin!(reader);
 
         let r = reader.read(&mut [0]).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
@@ -432,7 +447,7 @@ mod test {
         let reader = DelayStream(sleep_until(Instant::now() + Duration::from_millis(100)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
-        pin_mut!(reader);
+        pin!(reader);
 
         reader.read(&mut [0]).await.unwrap();
     }
@@ -442,7 +457,7 @@ mod test {
         let writer = DelayStream(sleep_until(Instant::now() + Duration::from_millis(500)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
-        pin_mut!(writer);
+        pin!(writer);
 
         let r = writer.write(&[0]).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
@@ -453,7 +468,7 @@ mod test {
         let writer = DelayStream(sleep_until(Instant::now() + Duration::from_millis(100)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
-        pin_mut!(writer);
+        pin!(writer);
 
         writer.write(&[0]).await.unwrap();
     }
@@ -474,7 +489,7 @@ mod test {
         let s = TcpStream::connect(&addr).await.unwrap();
         let mut s = TimeoutStream::new(s);
         s.set_read_timeout(Some(Duration::from_millis(100)));
-        pin_mut!(s);
+        pin!(s);
         s.read(&mut [0]).await.unwrap();
         let r = s.read(&mut [0]).await;
 

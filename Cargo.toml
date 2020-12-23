@@ -9,7 +9,9 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-tokio = { version = "0.3", features = ["time"] }
+pin-project = "1.0"
+tokio = { version = "1.0", features = ["time"] }
 
 [dev-dependencies]
-tokio = { version = "0.3", features = ["full"] }
+futures = "0.3"
+tokio = { version = "1.0", features = ["full"] }

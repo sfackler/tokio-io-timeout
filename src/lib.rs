@@ -10,14 +10,17 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use pin_project::pin_project;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::time::{sleep_until, Instant, Sleep};
 
+#[pin_project]
 #[derive(Debug)]
 struct TimeoutState {
     timeout: Option<Duration>,
+    #[pin]
     cur: Sleep,
     active: bool,
 }
@@ -39,31 +42,35 @@ impl TimeoutState {
 
     #[inline]
     fn set_timeout(&mut self, timeout: Option<Duration>) {
+        // since this takes &mut self, we can't yet be active
         self.timeout = timeout;
-        self.reset();
     }
 
     #[inline]
-    fn reset(&mut self) {
-        if self.active {
-            self.active = false;
-            self.cur.reset(Instant::now());
+    fn reset(self: Pin<&mut Self>) {
+        let this = self.project();
+
+        if *this.active {
+            *this.active = false;
+            this.cur.reset(Instant::now());
         }
     }
 
     #[inline]
-    fn poll_check(&mut self, cx: &mut Context) -> io::Result<()> {
-        let timeout = match self.timeout {
-            Some(timeout) => timeout,
+    fn poll_check(self: Pin<&mut Self>, cx: &mut Context<'_>) -> io::Result<()> {
+        let mut this = self.project();
+
+        let timeout = match this.timeout {
+            Some(timeout) => *timeout,
             None => return Ok(()),
         };
 
-        if !self.active {
-            self.cur.reset(Instant::now() + timeout);
-            self.active = true;
+        if !*this.active {
+            this.cur.as_mut().reset(Instant::now() + timeout);
+            *this.active = true;
         }
 
-        match Pin::new(&mut self.cur).poll(cx) {
+        match this.cur.poll(cx) {
             Poll::Ready(()) => Err(io::Error::from(io::ErrorKind::TimedOut)),
             Poll::Pending => Ok(()),
         }
@@ -71,15 +78,18 @@ impl TimeoutState {
 }
 
 /// An `AsyncRead`er which applies a timeout to read operations.
+#[pin_project]
 #[derive(Debug)]
 pub struct TimeoutReader<R> {
+    #[pin]
     reader: R,
+    #[pin]
     state: TimeoutState,
 }
 
 impl<R> TimeoutReader<R>
 where
-    R: AsyncRead + Unpin,
+    R: AsyncRead,
 {
     /// Returns a new `TimeoutReader` wrapping the specified reader.
     ///
@@ -121,17 +131,18 @@ where
 
 impl<R> AsyncRead for TimeoutReader<R>
 where
-    R: AsyncRead + Unpin,
+    R: AsyncRead,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        let r = Pin::new(&mut self.reader).poll_read(cx, buf);
+        let this = self.project();
+        let r = this.reader.poll_read(cx, buf);
         match r {
-            Poll::Pending => self.state.poll_check(cx)?,
-            _ => self.state.reset(),
+            Poll::Pending => this.state.poll_check(cx)?,
+            _ => this.state.reset(),
         }
         r
     }
@@ -139,29 +150,32 @@ where
 
 impl<R> AsyncWrite for TimeoutReader<R>
 where
-    R: AsyncWrite + Unpin,
+    R: AsyncWrite,
 {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.reader).poll_write(cx, buf)
+        self.project().reader.poll_write(cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.reader).poll_flush(cx)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        self.project().reader.poll_flush(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.reader).poll_shutdown(cx)
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        self.project().reader.poll_shutdown(cx)
     }
 }
 
 /// An `AsyncWrite`er which applies a timeout to write operations.
+#[pin_project]
 #[derive(Debug)]
 pub struct TimeoutWriter<W> {
+    #[pin]
     writer: W,
+    #[pin]
     state: TimeoutState,
 }
 
@@ -209,35 +223,38 @@ where
 
 impl<W> AsyncWrite for TimeoutWriter<W>
 where
-    W: AsyncWrite + Unpin,
+    W: AsyncWrite,
 {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let r = Pin::new(&mut self.writer).poll_write(cx, buf);
+        let this = self.project();
+        let r = this.writer.poll_write(cx, buf);
         match r {
-            Poll::Pending => self.state.poll_check(cx)?,
-            _ => self.state.reset(),
+            Poll::Pending => this.state.poll_check(cx)?,
+            _ => this.state.reset(),
         }
         r
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        let r = Pin::new(&mut self.writer).poll_flush(cx);
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        let this = self.project();
+        let r = this.writer.poll_flush(cx);
         match r {
-            Poll::Pending => self.state.poll_check(cx)?,
-            _ => self.state.reset(),
+            Poll::Pending => this.state.poll_check(cx)?,
+            _ => this.state.reset(),
         }
         r
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        let r = Pin::new(&mut self.writer).poll_shutdown(cx);
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        let this = self.project();
+        let r = this.writer.poll_shutdown(cx);
         match r {
-            Poll::Pending => self.state.poll_check(cx)?,
-            _ => self.state.reset(),
+            Poll::Pending => this.state.poll_check(cx)?,
+            _ => this.state.reset(),
         }
         r
     }
@@ -245,20 +262,25 @@ where
 
 impl<W> AsyncRead for TimeoutWriter<W>
 where
-    W: AsyncRead + Unpin,
+    W: AsyncRead,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.writer).poll_read(cx, buf)
+        self.project().writer.poll_read(cx, buf)
     }
+
 }
 
 /// A stream which applies read and write timeouts to an inner stream.
+#[pin_project]
 #[derive(Debug)]
-pub struct TimeoutStream<S>(TimeoutReader<TimeoutWriter<S>>);
+pub struct TimeoutStream<S> {
+    #[pin]
+    stream: TimeoutReader<TimeoutWriter<S>>
+}
 
 impl<S> TimeoutStream<S>
 where
@@ -269,47 +291,47 @@ where
     /// There is initially no read or write timeout.
     pub fn new(stream: S) -> TimeoutStream<S> {
         let writer = TimeoutWriter::new(stream);
-        let reader = TimeoutReader::new(writer);
-        TimeoutStream(reader)
+        let stream= TimeoutReader::new(writer);
+        TimeoutStream { stream }
     }
 
     /// Returns the current read timeout.
     pub fn read_timeout(&self) -> Option<Duration> {
-        self.0.timeout()
+        self.stream.timeout()
     }
 
     /// Sets the read timeout.
     ///
     /// This will reset any pending read timeout.
     pub fn set_read_timeout(&mut self, timeout: Option<Duration>) {
-        self.0.set_timeout(timeout)
+        self.stream.set_timeout(timeout)
     }
 
     /// Returns the current write timeout.
     pub fn write_timeout(&self) -> Option<Duration> {
-        self.0.get_ref().timeout()
+        self.stream.get_ref().timeout()
     }
 
     /// Sets the write timeout.
     ///
     /// This will reset any pending write timeout.
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
-        self.0.get_mut().set_timeout(timeout)
+        self.stream.get_mut().set_timeout(timeout)
     }
 
     /// Returns a shared reference to the inner stream.
     pub fn get_ref(&self) -> &S {
-        self.0.get_ref().get_ref()
+        self.stream.get_ref().get_ref()
     }
 
     /// Returns a mutable reference to the inner stream.
     pub fn get_mut(&mut self) -> &mut S {
-        self.0.get_mut().get_mut()
+        self.stream.get_mut().get_mut()
     }
 
     /// Consumes the stream, returning the inner stream.
     pub fn into_inner(self) -> S {
-        self.0.into_inner().into_inner()
+        self.stream.into_inner().into_inner()
     }
 }
 
@@ -318,11 +340,11 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.0).poll_read(cx, buf)
+        self.project().stream.poll_read(cx, buf)
     }
 }
 
@@ -331,19 +353,19 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
+        self.project().stream.poll_write(cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.0).poll_flush(cx)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        self.project().stream.poll_flush(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.0).poll_shutdown(cx)
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        self.project().stream.poll_shutdown(cx)
     }
 }
 
@@ -353,19 +375,20 @@ mod test {
     use std::net::TcpListener;
     use std::thread;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use futures::pin_mut;
     use tokio::net::TcpStream;
-
     use super::*;
 
-    struct DelayStream(Sleep);
+    #[pin_project]
+    struct DelayStream(#[pin] Sleep);
 
     impl AsyncRead for DelayStream {
         fn poll_read(
-            mut self: Pin<&mut Self>,
+            self: Pin<&mut Self>,
             cx: &mut Context,
             _buf: &mut ReadBuf,
         ) -> Poll<Result<(), io::Error>> {
-            match Pin::new(&mut self.0).poll(cx) {
+            match self.project().0.poll(cx) {
                 Poll::Ready(()) => Poll::Ready(Ok(())),
                 Poll::Pending => Poll::Pending,
             }
@@ -374,11 +397,11 @@ mod test {
 
     impl AsyncWrite for DelayStream {
         fn poll_write(
-            mut self: Pin<&mut Self>,
+            self: Pin<&mut Self>,
             cx: &mut Context,
             buf: &[u8],
         ) -> Poll<Result<usize, io::Error>> {
-            match Pin::new(&mut self.0).poll(cx) {
+            match self.project().0.poll(cx) {
                 Poll::Ready(()) => Poll::Ready(Ok(buf.len())),
                 Poll::Pending => Poll::Pending,
             }
@@ -393,21 +416,14 @@ mod test {
         }
     }
 
-    async fn read_one<R>(mut reader: R) -> Result<usize, io::Error>
-    where
-        R: AsyncRead + Unpin,
-    {
-        let mut buf: [u8; 1] = [0; 1];
-        reader.read(&mut buf).await
-    }
-
     #[tokio::test]
     async fn read_timeout() {
         let reader = DelayStream(sleep_until(Instant::now() + Duration::from_millis(500)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
+        pin_mut!(reader);
 
-        let r = read_one(reader).await;
+        let r = reader.read(&mut [0]).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
@@ -416,15 +432,9 @@ mod test {
         let reader = DelayStream(sleep_until(Instant::now() + Duration::from_millis(100)));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(500)));
+        pin_mut!(reader);
 
-        read_one(reader).await.unwrap();
-    }
-
-    async fn write_one<W>(mut writer: W) -> Result<(), io::Error>
-    where
-        W: AsyncWrite + Unpin,
-    {
-        writer.write_all(&[0]).await
+        reader.read(&mut [0]).await.unwrap();
     }
 
     #[tokio::test]
@@ -432,8 +442,9 @@ mod test {
         let writer = DelayStream(sleep_until(Instant::now() + Duration::from_millis(500)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
+        pin_mut!(writer);
 
-        let r = write_one(writer).await;
+        let r = writer.write(&[0]).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
@@ -442,8 +453,9 @@ mod test {
         let writer = DelayStream(sleep_until(Instant::now() + Duration::from_millis(100)));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(500)));
+        pin_mut!(writer);
 
-        write_one(writer).await.unwrap();
+        writer.write(&[0]).await.unwrap();
     }
 
     #[tokio::test]
@@ -462,8 +474,9 @@ mod test {
         let s = TcpStream::connect(&addr).await.unwrap();
         let mut s = TimeoutStream::new(s);
         s.set_read_timeout(Some(Duration::from_millis(100)));
-        let _ = read_one(&mut s).await.unwrap();
-        let r = read_one(&mut s).await;
+        pin_mut!(s);
+        s.read(&mut [0]).await.unwrap();
+        let r = s.read(&mut [0]).await;
 
         match r {
             Ok(_) => panic!("unexpected success"),

@@ -7,10 +7,10 @@
 #![doc(html_root_url = "https://docs.rs/tokio-io-timeout/1")]
 #![warn(missing_docs)]
 
+use pin_project_lite::pin_project;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use pin_project_lite::pin_project;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -109,8 +109,6 @@ where
     }
 
     /// Sets the read timeout.
-    ///
-    /// This will reset any pending timeout.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.state.set_timeout(timeout);
     }
@@ -207,8 +205,6 @@ where
     }
 
     /// Sets the write timeout.
-    ///
-    /// This will reset any pending timeout.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.state.set_timeout(timeout);
     }
@@ -284,7 +280,6 @@ where
     ) -> Poll<Result<(), io::Error>> {
         self.project().writer.poll_read(cx, buf)
     }
-
 }
 
 pin_project! {
@@ -305,7 +300,7 @@ where
     /// There is initially no read or write timeout.
     pub fn new(stream: S) -> TimeoutStream<S> {
         let writer = TimeoutWriter::new(stream);
-        let stream= TimeoutReader::new(writer);
+        let stream = TimeoutReader::new(writer);
         TimeoutStream { stream }
     }
 
@@ -315,8 +310,6 @@ where
     }
 
     /// Sets the read timeout.
-    ///
-    /// This will reset any pending read timeout.
     pub fn set_read_timeout(&mut self, timeout: Option<Duration>) {
         self.stream.set_timeout(timeout)
     }
@@ -327,8 +320,6 @@ where
     }
 
     /// Sets the write timeout.
-    ///
-    /// This will reset any pending write timeout.
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
         self.stream.get_mut().set_timeout(timeout)
     }
@@ -390,13 +381,13 @@ where
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::io::Write;
     use std::net::TcpListener;
     use std::thread;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::pin;
-    use super::*;
 
     pin_project! {
         struct DelayStream {

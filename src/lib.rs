@@ -1,9 +1,8 @@
 //! Tokio wrappers which apply timeouts to IO operations.
 //!
-//! These timeouts are analogous to the read and write timeouts on traditional
-//! blocking sockets. A timeout countdown is initiated when a read/write
-//! operation returns `WouldBlock`. If a read/write does not return successfully
-//! the before the countdown expires, `TimedOut` is returned.
+//! These timeouts are analogous to the read and write timeouts on traditional blocking sockets. A timeout countdown is
+//! initiated when a read/write operation returns [`Poll::Pending`]. If a read/write does not return successfully before
+//! the countdown expires, an [`io::Error`] with a kind of [`TimedOut`](io::ErrorKind::TimedOut) is returned.
 #![doc(html_root_url = "https://docs.rs/tokio-io-timeout/1")]
 #![warn(missing_docs)]
 

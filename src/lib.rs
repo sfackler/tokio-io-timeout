@@ -48,6 +48,12 @@ impl TimeoutState {
     }
 
     #[inline]
+    fn set_timeout_pinned(mut self: Pin<&mut Self>, timeout: Option<Duration>) {
+        *self.as_mut().project().timeout = timeout;
+        self.reset();
+    }
+
+    #[inline]
     fn reset(self: Pin<&mut Self>) {
         let this = self.project();
 
@@ -109,8 +115,19 @@ where
     }
 
     /// Sets the read timeout.
+    ///
+    /// This can only be used before the reader is pinned; use [`set_timeout_pinned`](Self::set_timeout_pinned)
+    /// otherwise.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.state.set_timeout(timeout);
+    }
+
+    /// Sets the read timeout.
+    ///
+    /// This will reset any pending timeout. Use [`set_timeout`](Self::set_timeout) instead if the reader is not yet
+    /// pinned.
+    pub fn set_timeout_pinned(self: Pin<&mut Self>, timeout: Option<Duration>) {
+        self.project().state.set_timeout_pinned(timeout);
     }
 
     /// Returns a shared reference to the inner reader.
@@ -205,8 +222,19 @@ where
     }
 
     /// Sets the write timeout.
+    ///
+    /// This can only be used before the writer is pinned; use [`set_timeout_pinned`](Self::set_timeout_pinned)
+    /// otherwise.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.state.set_timeout(timeout);
+    }
+
+    /// Sets the write timeout.
+    ///
+    /// This will reset any pending timeout. Use [`set_timeout`](Self::set_timeout) instead if the reader is not yet
+    /// pinned.
+    pub fn set_timeout_pinned(self: Pin<&mut Self>, timeout: Option<Duration>) {
+        self.project().state.set_timeout_pinned(timeout);
     }
 
     /// Returns a shared reference to the inner writer.
@@ -310,8 +338,19 @@ where
     }
 
     /// Sets the read timeout.
+    ///
+    /// This can only be used before the stream is pinned; use
+    /// [`set_read_timeout_pinned`](Self::set_read_timeout_pinned) otherwise.
     pub fn set_read_timeout(&mut self, timeout: Option<Duration>) {
         self.stream.set_timeout(timeout)
+    }
+
+    /// Sets the read timeout.
+    ///
+    /// This will reset any pending read timeout. Use [`set_read_timeout`](Self::set_read_timeout) instead if the stream
+    /// has not yet been pinned.
+    pub fn set_read_timeout_pinned(self: Pin<&mut Self>, timeout: Option<Duration>) {
+        self.project().stream.set_timeout_pinned(timeout)
     }
 
     /// Returns the current write timeout.
@@ -320,8 +359,22 @@ where
     }
 
     /// Sets the write timeout.
+    ///
+    /// This can only be used before the stream is pinned; use
+    /// [`set_write_timeout_pinned`](Self::set_write_timeout_pinned) otherwise.
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) {
         self.stream.get_mut().set_timeout(timeout)
+    }
+
+    /// Sets the write timeout.
+    ///
+    /// This will reset any pending write timeout. Use [`set_write_timeout`](Self::set_write_timeout) instead if the
+    /// stream has not yet been pinned.
+    pub fn set_write_timeout_pinned(self: Pin<&mut Self>, timeout: Option<Duration>) {
+        self.project()
+            .stream
+            .get_pin_mut()
+            .set_timeout_pinned(timeout)
     }
 
     /// Returns a shared reference to the inner stream.

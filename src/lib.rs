@@ -188,6 +188,18 @@ where
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         self.project().reader.poll_shutdown(cx)
     }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        self.project().reader.poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.reader.is_write_vectored()
+    }
 }
 
 pin_project! {
@@ -293,6 +305,24 @@ where
             _ => this.state.reset(),
         }
         r
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.project();
+        let r = this.writer.poll_write_vectored(cx, bufs);
+        match r {
+            Poll::Pending => this.state.poll_check(cx)?,
+            _ => this.state.reset(),
+        }
+        r
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.writer.is_write_vectored()
     }
 }
 
@@ -428,6 +458,18 @@ where
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         self.project().stream.poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        self.project().stream.poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
     }
 }
 

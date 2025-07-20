@@ -78,7 +78,10 @@ impl TimeoutState {
         }
 
         match this.cur.poll(cx) {
-            Poll::Ready(()) => Err(io::Error::from(io::ErrorKind::TimedOut)),
+            Poll::Ready(()) => {
+                *this.active = false;
+                Err(io::Error::from(io::ErrorKind::TimedOut))
+            }
             Poll::Pending => Ok(()),
         }
     }
@@ -559,13 +562,15 @@ mod test {
 
     #[tokio::test]
     async fn read_timeout() {
-        let reader = DelayStream::new(Instant::now() + Duration::from_millis(500));
+        let reader = DelayStream::new(Instant::now() + Duration::from_millis(150));
         let mut reader = TimeoutReader::new(reader);
         reader.set_timeout(Some(Duration::from_millis(100)));
         pin!(reader);
 
         let r = reader.read(&mut [0]).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
+
+        let _ = reader.read(&mut [0]).await.unwrap();
     }
 
     #[tokio::test]
@@ -575,18 +580,20 @@ mod test {
         reader.set_timeout(Some(Duration::from_millis(500)));
         pin!(reader);
 
-        reader.read(&mut [0]).await.unwrap();
+        let _ = reader.read(&mut [0]).await.unwrap();
     }
 
     #[tokio::test]
     async fn write_timeout() {
-        let writer = DelayStream::new(Instant::now() + Duration::from_millis(500));
+        let writer = DelayStream::new(Instant::now() + Duration::from_millis(150));
         let mut writer = TimeoutWriter::new(writer);
         writer.set_timeout(Some(Duration::from_millis(100)));
         pin!(writer);
 
         let r = writer.write(&[0]).await;
         assert_eq!(r.err().unwrap().kind(), io::ErrorKind::TimedOut);
+
+        let _ = writer.write(&[0]).await.unwrap();
     }
 
     #[tokio::test]
@@ -596,7 +603,7 @@ mod test {
         writer.set_timeout(Some(Duration::from_millis(500)));
         pin!(writer);
 
-        writer.write(&[0]).await.unwrap();
+        let _ = writer.write(&[0]).await.unwrap();
     }
 
     #[tokio::test]
@@ -616,7 +623,7 @@ mod test {
         let mut s = TimeoutStream::new(s);
         s.set_read_timeout(Some(Duration::from_millis(100)));
         pin!(s);
-        s.read(&mut [0]).await.unwrap();
+        let _ = s.read(&mut [0]).await.unwrap();
         let r = s.read(&mut [0]).await;
 
         match r {
